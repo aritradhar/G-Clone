@@ -16,9 +16,11 @@ Working day to day on the hardware below. See [What's left](#whats-left) for gap
 | Area | State |
 |---|---|
 | G602 DPI stages, report rate, battery, live DPI read-back | ✅ |
-| G602 button remapping (left/right/middle/back/forward) | ✅ |
+| G602 button remapping (left/right/middle/G4 = back/G5 = forward) | ✅ |
 | G602 extra buttons G6–G11 (read from the receiver's vendor channel) | ✅ use **Detect** once per button |
-| G602 Performance / Endurance switch | ✅ shown live (Endurance = mouse held at 125 Hz) |
+| Keystrokes recorded by pressing the combination | ✅ |
+| Media / volume actions | ✅ |
+| G602 Performance / Endurance switch | ✅ shown live; DPI lights turn green in Endurance |
 | G923 range, force-feedback strength, centering spring | ✅ |
 | G923 live wheel angle, pedals, buttons + button actions | ✅ |
 | Litra Glow power, brightness, colour temperature | ✅ |
@@ -46,8 +48,11 @@ Working day to day on the hardware below. See [What's left](#whats-left) for gap
 - Power, brightness (20–250 lm) and colour temperature (2700–6500 K)
 
 **Everywhere**
-- Assignments: keystrokes with modifiers, mouse buttons, macros, DPI up / down / cycle / shift,
-  light toggle, next profile, launch app or URL
+- Assignments: keystrokes with modifiers, mouse buttons, media / volume keys, macros,
+  DPI up / down / cycle / shift, light toggle, next profile, launch app or URL
+- Keystrokes are recorded by clicking the keystroke and pressing the combination
+  (e.g. Ctrl + Win + →). The keys are blocked while recording, so shortcuts don't fire.
+  You can still pick a key manually for ones that are hard to press
 - Macros: record or edit steps (keys, clicks, delays, text); play once, repeat while held, or toggle
 - Per-app profiles that switch automatically when a game or app gets focus
 - Tray icon, start with Windows (minimized to tray), single instance
@@ -129,7 +134,8 @@ crates/app    gclone: egui UI, device figures, tray, autostart
 - **Remapping.** The G602 has no HID++ button diverting, so left/right/middle/back/forward are
   remapped with low-level mouse and keyboard hooks plus `SendInput`. G6–G11 and the mode switch
   come from the receiver's vendor collection (`80 <mask> ..` reports) and go through the same
-  binding engine.
+  binding engine. G4/G5 appear on both paths; G-Clone binds them to the Windows Back/Forward
+  signal, because only that one can be blocked and replaced.
 - **Live input.** The wheel and pedals are read from the wheel's joystick HID collection in
   shared mode, so games keep working normally.
 

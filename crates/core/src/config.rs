@@ -216,8 +216,11 @@ pub struct Hardware {
 }
 
 impl Hardware {
+    /// Buttons that also reach Windows (left/right/middle, G4 = Back, G5 = Forward) always use
+    /// their Windows trigger: only that one can be swallowed, so a remap fully replaces it.
+    /// Their G-key bit, if learned, is ignored.
     pub fn trigger_of(&self, part: MousePart) -> Option<Trigger> {
-        self.mouse_map.iter().find(|(p, _)| *p == part).map(|(_, t)| *t).or(part.default_trigger())
+        part.default_trigger().or_else(|| self.mouse_map.iter().find(|(p, _)| *p == part).map(|(_, t)| *t))
     }
 
     pub fn set_trigger(&mut self, part: MousePart, trigger: Trigger) {
@@ -262,6 +265,8 @@ pub enum Action {
         mods: Mods,
     },
     Mouse(MouseButton),
+    /// Media / volume key (virtual-key code, see [`MEDIA_KEYS`]).
+    Media(u16),
     Macro(String),
     DpiUp,
     DpiDown,
@@ -273,6 +278,16 @@ pub enum Action {
     /// Opens a program, file or URL.
     Launch(String),
 }
+
+/// Media actions offered in the UI: (virtual-key code, label).
+pub const MEDIA_KEYS: [(u16, &str); 6] = [
+    (0xAF, "Volume up"),
+    (0xAE, "Volume down"),
+    (0xAD, "Mute"),
+    (0xB3, "Play / Pause"),
+    (0xB0, "Next track"),
+    (0xB1, "Previous track"),
+];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Binding {
@@ -460,6 +475,23 @@ impl Config {
             *self = Self::default();
             return;
         }
+        // Older configs learned G-key bits for buttons that also reach Windows (G4/G5): move
+        // bindings on those bits to the Windows trigger, which can be fully replaced.
+        let moved: Vec<(Trigger, Trigger)> = self
+            .hardware
+            .mouse_map
+            .iter()
+            .filter_map(|(part, learned)| part.default_trigger().map(|os| (*learned, os)))
+            .collect();
+        for profile in &mut self.profiles {
+            for b in profile.bindings.iter_mut().flatten() {
+                if let Some((_, os)) = moved.iter().find(|(learned, _)| *learned == b.trigger) {
+                    b.trigger = *os;
+                }
+            }
+        }
+        self.hardware.mouse_map.retain(|(part, _)| part.default_trigger().is_none());
+
         let fallback = Self::default().profiles.remove(0);
         let d = &mut self.profiles[0];
         d.mouse.get_or_insert_with(|| fallback.mouse.unwrap());
@@ -508,8 +540,26 @@ mod tests {
         let text = toml::to_string_pretty(&c).unwrap();
         let back: Config = toml::from_str(&text).unwrap();
         assert_eq!(c, back);
+        assert_eq!(back.hardware.trigger_of(MousePart::G7), Some(Trigger::Key(0x31)));
+        assert_eq!(back.hardware.trigger_of(MousePart::G4), Some(Trigger::Mouse(MouseButton::Back)));
         assert_eq!(back.profile_for_app("FORZA.EXE"), 1);
         assert_eq!(back.resolved(1).mouse, back.resolved(0).mouse);
         assert_eq!(back.resolved(1).wheel.range, 540);
+    }
+
+    #[test]
+    fn learned_gkey_for_g4_moves_to_back() {
+        let mut c = Config::default();
+        c.hardware.set_trigger(MousePart::G4, Trigger::GKey(3));
+        c.hardware.set_trigger(MousePart::G7, Trigger::GKey(6));
+        c.profiles[0].bindings = Some(vec![
+            Binding { trigger: Trigger::GKey(3), action: Action::Media(0xAF) },
+            Binding { trigger: Trigger::GKey(6), action: Action::DpiUp },
+        ]);
+        c.normalize();
+        let b = c.profiles[0].bindings.as_ref().unwrap();
+        assert_eq!(b[0].trigger, Trigger::Mouse(MouseButton::Back));
+        assert_eq!(b[1].trigger, Trigger::GKey(6));
+        assert_eq!(c.hardware.trigger_of(MousePart::G7), Some(Trigger::GKey(6)));
     }
 }

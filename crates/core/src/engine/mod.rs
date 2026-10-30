@@ -9,7 +9,7 @@ mod macros;
 
 pub use joy::JoyLive;
 
-use crate::config::{Action, Config, LightSettings, MouseSettings, Resolved, Step, Trigger, WheelSettings};
+use crate::config::{Action, Config, LightSettings, Mods, MouseSettings, Resolved, Step, Trigger, WheelSettings};
 use crate::devices::{discover, joystick::Joystick, litra::Litra, mouse::{Battery, Mouse}, wheel::Wheel, Kind};
 use std::sync::atomic::{AtomicBool, Ordering};
 use crate::hidpp::{self, Error};
@@ -28,6 +28,8 @@ const BATTERY_EVERY: Duration = Duration::from_secs(60);
 pub enum UiEvent {
     Captured(Trigger),
     Recorded(Step),
+    /// A key combination pressed for a keystroke assignment.
+    CapturedCombo { vk: u16, mods: Mods },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -139,6 +141,11 @@ impl Engine {
     /// The next button / key press is reported as [`UiEvent::Captured`] instead of acting.
     pub fn capture_trigger(&self) {
         hook::capture_trigger();
+    }
+
+    /// The next key combination is reported as [`UiEvent::CapturedCombo`] (and swallowed).
+    pub fn capture_combo(&self) {
+        hook::capture_combo();
     }
 
     /// Reports keyboard and mouse-button input as [`UiEvent::Recorded`] steps.

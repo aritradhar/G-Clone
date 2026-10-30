@@ -5,7 +5,7 @@
 //! only do table lookups and `SendInput`; anything slower goes to another thread.
 
 use super::{input, macros::MacroCmd, Cmd, Shared, UiEvent};
-use crate::config::{Action, Binding, MouseButton, Step, Trigger};
+use crate::config::{Action, Binding, Mods, MouseButton, Step, Trigger};
 use crossbeam_channel::Sender;
 use std::collections::{HashMap, HashSet};
 use std::ptr::null_mut;
@@ -23,6 +23,23 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 const CAPTURE_OFF: u8 = 0;
 const CAPTURE_TRIGGER: u8 = 1;
 const CAPTURE_RECORD: u8 = 2;
+/// Next key combination (modifiers + key) becomes a keystroke assignment.
+const CAPTURE_COMBO: u8 = 3;
+
+const MOD_CTRL: u8 = 1;
+const MOD_SHIFT: u8 = 2;
+const MOD_ALT: u8 = 4;
+const MOD_WIN: u8 = 8;
+
+fn modifier_bit(vk: u16) -> Option<u8> {
+    match vk {
+        0x10 | 0xA0 | 0xA1 => Some(MOD_SHIFT),
+        0x11 | 0xA2 | 0xA3 => Some(MOD_CTRL),
+        0x12 | 0xA4 | 0xA5 => Some(MOD_ALT),
+        0x5B | 0x5C => Some(MOD_WIN),
+        _ => None,
+    }
+}
 
 pub(super) struct Ctx {
     pub mgr: Sender<Cmd>,
@@ -42,6 +59,9 @@ struct State {
     last_record: Mutex<Option<Instant>>,
     /// Every trigger currently held, bound or not, for the live device figures.
     pressed: Mutex<HashSet<Trigger>>,
+    /// Modifiers held during combo capture, and the last one pressed (for a lone modifier).
+    combo_mods: AtomicU8,
+    combo_last_mod: Mutex<Option<u16>>,
 }
 
 static STATE: OnceLock<State> = OnceLock::new();
@@ -127,6 +147,8 @@ pub(super) fn start(ctx: Ctx) {
         held: Mutex::new(HashSet::new()),
         last_record: Mutex::new(None),
         pressed: Mutex::new(HashSet::new()),
+        combo_mods: AtomicU8::new(0),
+        combo_last_mod: Mutex::new(None),
     });
     std::thread::Builder::new()
         .name("gclone-hooks".into())
@@ -178,6 +200,14 @@ pub(super) fn record() {
         *s.last_record.lock().unwrap() = None;
     }
     set_capture(CAPTURE_RECORD);
+}
+
+pub(super) fn capture_combo() {
+    if let Some(s) = STATE.get() {
+        s.combo_mods.store(0, Ordering::SeqCst);
+        *s.combo_last_mod.lock().unwrap() = None;
+    }
+    set_capture(CAPTURE_COMBO);
 }
 
 pub(super) fn stop_capture() {
@@ -261,6 +291,11 @@ pub(super) fn handle(trigger: Trigger, down: bool) -> bool {
             record_step(s, trigger, down);
             return false;
         }
+        CAPTURE_COMBO => {
+            if let Trigger::Key(vk) = trigger {
+                return combo_step(s, vk, down);
+            }
+        }
         _ => {}
     }
 
@@ -283,6 +318,7 @@ pub(super) fn handle(trigger: Trigger, down: bool) -> bool {
     match action {
         Action::Disabled => {}
         Action::Key { vk, mods } => input::combo(*vk, *mods, down),
+        Action::Media(vk) => input::key(*vk, down),
         Action::Mouse(b) if !repeat => input::mouse(*b, down),
         Action::Macro(name) if !repeat => {
             let cmd = if down { MacroCmd::Press(name.clone()) } else { MacroCmd::Release(name.clone()) };
@@ -293,6 +329,50 @@ pub(super) fn handle(trigger: Trigger, down: bool) -> bool {
             let _ = s.ctx.mgr.send(Cmd::Action(other.clone(), down));
         }
         _ => {}
+    }
+    true
+}
+
+/// Builds a key combination from keyboard input; all of it is swallowed so shortcuts like
+/// Alt+F4 don't fire while being recorded. A lone modifier (press + release) also counts.
+fn combo_step(s: &State, vk: u16, down: bool) -> bool {
+    let finish = |vk: u16, mods: u8| {
+        s.capture.store(CAPTURE_OFF, Ordering::SeqCst);
+        refresh_hooks();
+        let mods = Mods {
+            ctrl: mods & MOD_CTRL != 0,
+            shift: mods & MOD_SHIFT != 0,
+            alt: mods & MOD_ALT != 0,
+            win: mods & MOD_WIN != 0,
+        };
+        send_ui(s, UiEvent::CapturedCombo { vk, mods });
+    };
+    match (modifier_bit(vk), down) {
+        (Some(bit), true) => {
+            s.combo_mods.fetch_or(bit, Ordering::SeqCst);
+            *s.combo_last_mod.lock().unwrap() = Some(vk);
+        }
+        (Some(bit), false) => {
+            let before = s.combo_mods.fetch_and(!bit, Ordering::SeqCst);
+            // Released the only modifier without pressing another key: assign the modifier itself.
+            if before == bit && *s.combo_last_mod.lock().unwrap() == Some(vk) {
+                finish(vk, 0);
+            }
+        }
+        (None, true) => {
+            let mods = s.combo_mods.load(Ordering::SeqCst);
+            // Releases of these keys arrive after capture ends; swallow them too.
+            let mut swallow = s.swallow_up.lock().unwrap();
+            swallow.insert(Trigger::Key(vk));
+            for m in [0x10u16, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C] {
+                if modifier_bit(m).is_some_and(|b| mods & b != 0) {
+                    swallow.insert(Trigger::Key(m));
+                }
+            }
+            drop(swallow);
+            finish(vk, mods);
+        }
+        (None, false) => {}
     }
     true
 }

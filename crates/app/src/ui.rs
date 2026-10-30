@@ -55,6 +55,8 @@ enum Capture {
     Row(usize),
     Mouse(MousePart),
     Wheel(WheelPart),
+    /// Key combination for the keystroke assignment of this trigger.
+    Combo(Trigger),
 }
 
 pub struct App {
@@ -150,8 +152,17 @@ impl App {
                         }
                         _ => self.capture_note = Some("Press the button on the wheel.".into()),
                     },
-                    None => {}
+                    Some(Capture::Combo(_)) | None => {}
                 },
+                UiEvent::CapturedCombo { vk, mods } => {
+                    if let Some(Capture::Combo(trigger)) = self.capture.take() {
+                        let list = self.cfg.profiles[self.edit].bindings.get_or_insert_with(Vec::new);
+                        match list.iter_mut().find(|b| b.trigger == trigger) {
+                            Some(b) => b.action = Action::Key { vk, mods },
+                            None => list.push(Binding { trigger, action: Action::Key { vk, mods } }),
+                        }
+                    }
+                }
                 UiEvent::Recorded(step) => {
                     if let Some(m) = self.recording.and_then(|i| self.cfg.macros.get_mut(i)) {
                         m.steps.push(step);
@@ -192,9 +203,11 @@ impl eframe::App for App {
         self.status = engine.status();
         self.joy = engine.joystick();
         self.pressed = engine.pressed();
+        // Snapshot first: captured keystrokes / Detect results edit the config too, and must
+        // count as changes so they reach the engine and get saved.
+        let before = self.cfg.clone();
         self.handle_engine_events();
         self.edit = self.edit.min(self.cfg.profiles.len() - 1);
-        let before = self.cfg.clone();
 
         egui::SidePanel::left("nav")
             .resizable(false)
@@ -462,7 +475,9 @@ impl App {
                     if ui.small_button("Cancel").clicked() {
                         self.cancel_capture();
                     }
-                } else if ui.small_button("Detect").on_hover_text("Press the physical button to learn what it sends").clicked() {
+                } else if part.default_trigger().is_none()
+                    && ui.small_button("Detect").on_hover_text("Press the physical button to learn what it sends").clicked()
+                {
                     self.start_capture(Capture::Mouse(part));
                 }
             });
@@ -564,10 +579,16 @@ impl App {
             }
             return;
         }
+        let recording = self.capture == Some(Capture::Combo(trigger));
         let list = p.bindings.get_or_insert_with(Vec::new);
+        let mut record = false;
         match list.iter().position(|b| b.trigger == trigger) {
             Some(i) => {
-                ui.horizontal_wrapped(|ui| action_editor(ui, id, &mut list[i].action, &macros));
+                ui.horizontal_wrapped(|ui| record = action_editor(ui, id, &mut list[i].action, &macros, recording));
+                if matches!(list[i].action, Action::Key { .. }) && !recording {
+                    ui.label(RichText::new("Click the keystroke, then press the keys you want.").weak().small());
+                }
+                manual_key_editor(ui, id, &mut list[i].action);
                 if ui.button("Restore default").clicked() {
                     list.remove(i);
                 }
@@ -585,9 +606,19 @@ impl App {
                     });
                 if kind != 0 {
                     list.push(Binding { trigger, action: action_for_kind(kind, &macros) });
+                    // Picking "Keystroke" goes straight to pressing the combination.
+                    record = kind == KIND_KEYSTROKE;
                 }
             }
         }
+        if record {
+            self.start_combo(trigger);
+        }
+    }
+
+    fn start_combo(&mut self, trigger: Trigger) {
+        self.capture = Some(Capture::Combo(trigger));
+        self.shared.engine.capture_combo();
     }
 
     fn binding_list(&mut self, ui: &mut Ui) {
@@ -596,6 +627,7 @@ impl App {
         let edit = self.edit;
         let capture = self.capture;
         let mut start = None;
+        let mut combo = None;
         let names = self.cfg.hardware.clone();
         let Some(list) = override_section(ui, edit, &mut self.cfg.profiles[edit].bindings, &default) else { return };
         let mut remove = None;
@@ -613,11 +645,15 @@ impl App {
                     }
                 }
                 ui.label("→");
-                action_editor(ui, Id::new(("row", i)), &mut b.action, &macro_names);
+                let recording = capture == Some(Capture::Combo(b.trigger));
+                if action_editor(ui, Id::new(("row", i)), &mut b.action, &macro_names, recording) {
+                    combo = Some(b.trigger);
+                }
                 if ui.small_button("🗑").clicked() {
                     remove = Some(i);
                 }
             });
+            manual_key_editor(ui, Id::new(("row", i)), &mut b.action);
             ui.separator();
         }
         if let Some(i) = remove {
@@ -629,6 +665,9 @@ impl App {
         }
         if let Some(i) = start {
             self.start_capture(Capture::Row(i));
+        }
+        if let Some(t) = combo {
+            self.start_combo(t);
         }
     }
 }
@@ -1108,7 +1147,7 @@ fn trigger_label(t: Trigger) -> String {
         Trigger::Mouse(b) => b.label().to_string(),
         Trigger::Key(vk) => format!("Key {}", keys::name(vk)),
         Trigger::Joy(n) => format!("Wheel button {n}"),
-        Trigger::GKey(bit) => format!("G-key channel bit {bit}"),
+        Trigger::GKey(bit) => format!("G-key #{bit}"),
     }
 }
 
@@ -1141,6 +1180,7 @@ fn action_summary(a: &Action) -> String {
             parts.join(" + ")
         }
         Action::Mouse(b) => b.label().into(),
+        Action::Media(vk) => MEDIA_KEYS.iter().find(|(k, _)| k == vk).map_or("Media key", |(_, l)| *l).into(),
         Action::Macro(n) => format!("Macro: {n}"),
         Action::DpiUp => "DPI Up".into(),
         Action::DpiDown => "DPI Down".into(),
@@ -1152,7 +1192,7 @@ fn action_summary(a: &Action) -> String {
     }
 }
 
-const ACTION_KINDS: [&str; 11] = [
+const ACTION_KINDS: [&str; 12] = [
     "Do nothing",
     "Keystroke",
     "Mouse button",
@@ -1164,6 +1204,7 @@ const ACTION_KINDS: [&str; 11] = [
     "Toggle Litra light",
     "Next profile",
     "Launch app / URL",
+    "Media / volume",
 ];
 
 fn action_kind(a: &Action) -> usize {
@@ -1179,6 +1220,7 @@ fn action_kind(a: &Action) -> usize {
         Action::LightToggle => 8,
         Action::NextProfile => 9,
         Action::Launch(_) => 10,
+        Action::Media(_) => 11,
     }
 }
 
@@ -1194,11 +1236,17 @@ fn action_for_kind(kind: usize, macros: &[String]) -> Action {
         8 => Action::LightToggle,
         9 => Action::NextProfile,
         10 => Action::Launch(String::new()),
+        11 => Action::Media(MEDIA_KEYS[0].0),
         _ => Action::Disabled,
     }
 }
 
-fn action_editor(ui: &mut Ui, id: Id, a: &mut Action, macros: &[String]) {
+const KIND_KEYSTROKE: usize = 1;
+
+/// Edits one action. Returns true when the user asks to record a key combination;
+/// `recording` shows that one is being captured for this action right now.
+fn action_editor(ui: &mut Ui, id: Id, a: &mut Action, macros: &[String], recording: bool) -> bool {
+    let mut record = false;
     let current = action_kind(a);
     let mut kind = current;
     egui::ComboBox::from_id_salt(id.with("kind"))
@@ -1211,14 +1259,27 @@ fn action_editor(ui: &mut Ui, id: Id, a: &mut Action, macros: &[String]) {
         });
     if kind != current {
         *a = action_for_kind(kind, macros);
+        record = kind == KIND_KEYSTROKE;
     }
     match a {
         Action::Key { vk, mods } => {
-            key_picker(ui, id.with("key"), vk);
-            ui.checkbox(&mut mods.ctrl, "Ctrl");
-            ui.checkbox(&mut mods.shift, "Shift");
-            ui.checkbox(&mut mods.alt, "Alt");
-            ui.checkbox(&mut mods.win, "Win");
+            if recording {
+                ui.label(RichText::new("Press the key combination…").color(ACCENT));
+            } else {
+                let combo = action_summary(&Action::Key { vk: *vk, mods: *mods });
+                let button = egui::Button::new(RichText::new(combo).strong()).min_size(egui::vec2(120.0, 24.0));
+                if ui.add(button).on_hover_text("Click, then press the keys you want (e.g. Ctrl + Shift + S)").clicked() {
+                    record = true;
+                }
+            }
+        }
+        Action::Media(vk) => {
+            let label = MEDIA_KEYS.iter().find(|(k, _)| k == vk).map_or("?", |(_, l)| *l);
+            egui::ComboBox::from_id_salt(id.with("media")).selected_text(label).show_ui(ui, |ui| {
+                for (k, l) in MEDIA_KEYS {
+                    ui.selectable_value(vk, k, l);
+                }
+            });
         }
         Action::Mouse(b) => button_picker(ui, id.with("btn"), b),
         Action::Macro(name) => {
@@ -1237,6 +1298,23 @@ fn action_editor(ui: &mut Ui, id: Id, a: &mut Action, macros: &[String]) {
             ui.add(egui::TextEdit::singleline(target).hint_text("C:\\path\\app.exe or https://…").desired_width(220.0));
         }
         _ => {}
+    }
+    record
+}
+
+/// Manual key + modifier editing, for keys that are hard to press (e.g. F13–F24).
+/// Shown on its own line under [`action_editor`].
+fn manual_key_editor(ui: &mut Ui, id: Id, a: &mut Action) {
+    if let Action::Key { vk, mods } = a {
+        egui::CollapsingHeader::new(RichText::new("Pick key manually").small()).id_salt(id.with("manual")).show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                key_picker(ui, id.with("key"), vk);
+                ui.checkbox(&mut mods.ctrl, "Ctrl");
+                ui.checkbox(&mut mods.shift, "Shift");
+                ui.checkbox(&mut mods.alt, "Alt");
+                ui.checkbox(&mut mods.win, "Win");
+            });
+        });
     }
 }
 

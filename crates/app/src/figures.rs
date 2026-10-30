@@ -8,6 +8,7 @@ use gclone_core::config::{MousePart, WheelPart};
 
 pub const ACCENT: Color32 = Color32::from_rgb(0x00, 0xC8, 0xD7);
 const BLUE: Color32 = Color32::from_rgb(0x1E, 0x90, 0xE6);
+const ENDURANCE_GREEN: Color32 = Color32::from_rgb(0x4C, 0xD9, 0x64);
 const BODY: Color32 = Color32::from_rgb(0x26, 0x28, 0x2D);
 const BODY_EDGE: Color32 = Color32::from_rgb(0x44, 0x48, 0x50);
 const PART: Color32 = Color32::from_rgb(0x34, 0x37, 0x3E);
@@ -165,10 +166,12 @@ pub fn mouse(ui: &mut Ui, view: MouseView, parts: &[Callout], mode: Option<bool>
             painter.text(map((0.50, 0.80)), Align2::CENTER_CENTER, "G", FontId::proportional(22.0), TEXT_DIM);
 
             // DPI indicator lights (3 x 4 grid) and the Performance / Endurance slider.
+            // Like the real mouse, the lights glow green in Endurance mode.
+            let led = if mode == Some(true) { ENDURANCE_GREEN } else { BLUE };
             for row in 0..3 {
                 for col in 0..4 {
                     let p = map((0.4775 + col as f32 * 0.015, 0.40 + row as f32 * 0.016));
-                    painter.circle_filled(p, 2.2, BLUE.linear_multiply(0.85));
+                    painter.circle_filled(p, 2.2, led.linear_multiply(0.85));
                 }
             }
             let switch = Rect::from_center_size(map((0.50, 0.50)), vec2(18.0, 26.0));
@@ -188,7 +191,8 @@ pub fn mouse(ui: &mut Ui, view: MouseView, parts: &[Callout], mode: Option<bool>
                 None => "Unknown",
             };
             painter.text(pos2(x0 + LABEL_W, y - 23.0), Align2::RIGHT_BOTTOM, "Mode switch", FontId::proportional(12.0), TEXT_DIM);
-            painter.text(pos2(x0 + LABEL_W, y - 4.0), Align2::RIGHT_BOTTOM, mode_text, FontId::proportional(15.0), TEXT);
+            let mode_col = if mode == Some(true) { ENDURANCE_GREEN } else { TEXT };
+            painter.text(pos2(x0 + LABEL_W, y - 4.0), Align2::RIGHT_BOTTOM, mode_text, FontId::proportional(15.0), mode_col);
         }
         MouseView::Side => {
             painter.add(Shape::convex_polygon(SIDE_BODY.map(map).to_vec(), BODY, edge(1.5)));
