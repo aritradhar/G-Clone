@@ -1,0 +1,30 @@
+[package]
+name = "gclone-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+hidapi = { version = "2.6", default-features = false, features = ["windows-native"] }
+thiserror = "1"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+crossbeam-channel = "0.5"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Devices_HumanInterfaceDevice",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_Accessibility",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+env_logger = "0.11"

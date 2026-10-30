@@ -1,0 +1,14 @@
+# Build output
+/target
+/dist
+*.pdb
+
+# Secrets — never commit
+.env
+.env.*
+
+# Local runtime data (config written next to the exe)
+data/
+
+# Local planning notes
+/plans
