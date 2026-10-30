@@ -94,10 +94,14 @@ fn run_window(shared: &Arc<AppShared>) {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("G-Clone")
-            .with_inner_size([1180.0, 760.0])
-            .with_min_inner_size([900.0, 600.0])
+            // Sized so the fixed-size device figures always fit beside the settings card.
+            .with_inner_size([1400.0, 860.0])
+            .with_min_inner_size([1300.0, 760.0])
             .with_icon(tray::window_icon()),
         run_and_return: true,
+        // NVIDIA's GL driver busy-waits for vsync (~15 ms CPU per frame); the UI caps its
+        // own frame rate instead (see `ui::FRAME_BUDGET`).
+        vsync: false,
         ..Default::default()
     };
     let s = shared.clone();

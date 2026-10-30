@@ -18,8 +18,9 @@ pub(super) fn spawn(mut joy: Joystick, shared: Arc<Shared>, alive: Arc<AtomicBoo
     alive.store(true, Ordering::SeqCst);
     let flag = alive.clone();
     let started = std::thread::Builder::new().name("gclone-wheel".into()).spawn(move || {
+        let initial = joy.snapshot().unwrap_or_default();
         *shared.joy.lock().unwrap() =
-            Some(JoyLive { axes: joy.axes.clone(), button_count: joy.button_count, state: JoyState::default() });
+            Some(JoyLive { axes: joy.axes.clone(), button_count: joy.button_count, state: initial });
         // `None` until the first report, so buttons held at startup don't fire.
         let mut prev: Option<Vec<u16>> = None;
         while let Some(read) = joy.read() {

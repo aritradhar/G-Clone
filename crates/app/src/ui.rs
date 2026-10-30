@@ -2,7 +2,7 @@
 //! live device figure. The UI edits a copy of [`Config`]; changes go to the engine at once
 //! and are saved to disk shortly after.
 
-use crate::figures::{self, Callout, WheelView, ACCENT};
+use crate::figures::{self, Callout, MouseView, WheelView, ACCENT};
 use crate::{tray, AppShared};
 use eframe::egui::{self, Color32, Id, RichText, Ui};
 use gclone_core::config::*;
@@ -21,6 +21,9 @@ const OK: Color32 = Color32::from_rgb(0x4C, 0xD9, 0x64);
 const OFF: Color32 = Color32::from_rgb(0x55, 0x57, 0x5C);
 const WARN: Color32 = Color32::from_rgb(0xE0, 0x80, 0x60);
 const SAVE_DELAY: Duration = Duration::from_millis(600);
+/// Minimum time between frames (~60 fps). With vsync off, bursts of pointer events would
+/// otherwise repaint at the input rate.
+const FRAME_BUDGET: Duration = Duration::from_millis(16);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
@@ -78,6 +81,8 @@ pub struct App {
     autostart: bool,
     autostart_error: Option<String>,
     logo: egui::TextureHandle,
+    last_frame: Instant,
+    mouse_view: figures::MouseView,
 }
 
 impl App {
@@ -86,6 +91,7 @@ impl App {
         if let Ok(RawWindowHandle::Win32(h)) = cc.window_handle().map(|h| h.as_raw()) {
             tray::set_window(h.hwnd.get());
         }
+        stop_raw_input();
         *shared.ctx.lock().unwrap() = Some(cc.egui_ctx.clone());
         let logo = cc.egui_ctx.load_texture(
             "logo",
@@ -115,6 +121,8 @@ impl App {
             autostart: crate::autostart::is_enabled(),
             autostart_error: None,
             logo,
+            last_frame: Instant::now(),
+            mouse_view: figures::MouseView::Top,
         }
     }
 
@@ -167,6 +175,18 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let since = self.last_frame.elapsed();
+        if since < FRAME_BUDGET {
+            std::thread::sleep(FRAME_BUDGET - since);
+        }
+        self.last_frame = Instant::now();
+        if std::env::var_os("GCLONE_TRACE_REPAINT").is_some() {
+            let causes: Vec<String> = ctx.repaint_causes().iter().map(|c| c.to_string().replace('\n', " ")).collect();
+            let events: Vec<String> = ctx.input(|i| {
+                i.raw.events.iter().map(|e| format!("{e:?}").chars().take(28).collect()).collect()
+            });
+            log::info!("frame {} causes {} events {:?}", ctx.cumulative_pass_nr(), causes.join(" | "), events);
+        }
         let engine = &self.shared.engine;
         engine.set_live(matches!(self.page, Page::Mouse | Page::Wheel));
         self.status = engine.status();
@@ -237,10 +257,11 @@ impl App {
                 ui.add_space(8.0);
             }
             ui.horizontal(|ui| {
-                match connected {
-                    Some(c) => ui.label(RichText::new("●").color(if c { OK } else { OFF })),
-                    None => ui.label("  "),
-                };
+                // Drawn rather than a "●" glyph, which egui's bundled fonts don't have.
+                let (dot, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+                if let Some(c) = connected {
+                    ui.painter().circle_filled(dot.center(), 4.5, if c { OK } else { OFF });
+                }
                 if ui.selectable_label(self.page == page, RichText::new(label).size(15.0)).clicked() {
                     self.page = page;
                 }
@@ -252,7 +273,7 @@ impl App {
                 ui.label(RichText::new(e).small().color(WARN));
             }
             if let Some((pct, charging)) = self.status.mouse.as_ref().and_then(|m| m.battery) {
-                ui.label(RichText::new(format!("Mouse battery {pct}%{}", if charging { " ⚡" } else { "" })).weak());
+                ui.label(RichText::new(format!("Mouse battery {pct}%{}", if charging { " (charging)" } else { "" })).weak());
             }
         });
     }
@@ -386,7 +407,22 @@ impl App {
                 }
             })
             .collect();
-        if let Some(part) = figures::mouse(ui, &callouts) {
+        ui.horizontal(|ui| {
+            ui.add_space((ui.available_width() / 2.0 - 90.0).max(0.0));
+            for (view, label) in [(MouseView::Top, "TOP VIEW"), (MouseView::Side, "SIDE VIEW")] {
+                let selected = self.mouse_view == view;
+                let text = RichText::new(label).size(13.0).color(if selected { Color32::BLACK } else { Color32::WHITE });
+                let mut button = egui::Button::new(text).rounding(14.0).min_size(egui::vec2(84.0, 26.0));
+                if selected {
+                    button = button.fill(Color32::WHITE);
+                }
+                if ui.add(button).clicked() {
+                    self.mouse_view = view;
+                }
+            }
+        });
+        let mode = self.status.mouse.as_ref().and_then(|m| m.endurance);
+        if let Some(part) = figures::mouse(ui, self.mouse_view, &callouts, mode) {
             self.mouse_part = part;
             self.mouse_tab = MouseTab::Assignments;
         }
@@ -502,8 +538,16 @@ impl App {
         let Some(m) = override_section(ui, edit, &mut self.cfg.profiles[edit].mouse, &default) else { return };
         section(ui, "Report rate");
         ui.label(RichText::new("How often the mouse reports its position. Higher is smoother, lower saves battery.").weak());
+        let endurance = self.status.mouse.as_ref().and_then(|s| s.endurance) == Some(true);
         for ms in &rates {
             ui.radio_value(&mut m.report_rate_ms, *ms, format!("{} Hz  ({} ms)", 1000 / *ms as u32, ms));
+        }
+        if endurance {
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new("The mouse's mode switch is on Endurance, which holds it at 125 Hz. Slide it to Performance to use this setting.")
+                    .color(WARN),
+            );
         }
     }
 
@@ -605,9 +649,12 @@ impl App {
         Some((((v - a.min) as f32 / span).clamp(0.0, 1.0), v))
     }
 
+    /// Pedal travel 0..1; a connected wheel that hasn't reported yet is at rest.
     fn pedal(&self, usage: u16) -> Option<f32> {
-        let (f, _) = self.axis_value(usage)?;
-        Some(if self.cfg.hardware.axes.invert_pedals { 1.0 - f } else { f })
+        match self.axis_value(usage) {
+            Some((f, _)) => Some(if self.cfg.hardware.axes.invert_pedals { 1.0 - f } else { f }),
+            None => self.joy.as_ref().map(|_| 0.0),
+        }
     }
 
     fn wheel_range(&self) -> u16 {
@@ -624,7 +671,10 @@ impl App {
             return;
         }
         let range = self.wheel_range() as f32;
-        let angle = self.axis_value(axes.steering).map(|(f, _)| (f - 0.5) * range);
+        let angle = match self.axis_value(axes.steering) {
+            Some((f, _)) => Some((f - 0.5) * range),
+            None => self.joy.as_ref().map(|_| 0.0),
+        };
         let hat = self.joy.as_ref().and_then(|j| {
             let i = j.axes.iter().position(|a| a.usage == USAGE_HAT)?;
             let v = *j.state.values.get(i)?;
@@ -795,7 +845,7 @@ impl App {
                 Some(l) => (l.on, l.brightness, l.temperature),
                 None => (false, 0, 4500),
             };
-            light_figure(ui, on, b, t);
+            figures::light(ui, on, b, t);
         });
     }
 
@@ -825,29 +875,6 @@ impl App {
     }
 }
 
-/// Glowing panel whose colour follows the light's temperature and brightness.
-fn light_figure(ui: &mut Ui, on: bool, lumens: u16, kelvin: u16) {
-    let rect = ui.available_rect_before_wrap();
-    ui.allocate_rect(rect, egui::Sense::hover());
-    let painter = ui.painter_at(rect);
-    let size = egui::vec2(rect.width().min(rect.height()) * 0.5, rect.width().min(rect.height()) * 0.5);
-    let panel = egui::Rect::from_center_size(rect.center(), size);
-    // Rough blackbody tint between 2700 K (amber) and 6500 K (cool white).
-    let t = ((kelvin as f32 - 2700.0) / 3800.0).clamp(0.0, 1.0);
-    let tint = Color32::from_rgb(255, (180.0 + 70.0 * t) as u8, (110.0 + 140.0 * t) as u8);
-    if on {
-        let k = 0.35 + 0.65 * (lumens as f32 / 250.0);
-        for i in (1..=6).rev() {
-            let glow = panel.expand(i as f32 * 14.0);
-            painter.rect_filled(glow, 30.0 + i as f32 * 8.0, tint.linear_multiply(0.04 * k));
-        }
-        painter.rect_filled(panel, 24.0, tint.linear_multiply(k));
-    } else {
-        painter.rect(panel, 24.0, Color32::from_rgb(0x1A, 0x1B, 0x1E), egui::Stroke::new(1.0_f32, OFF));
-    }
-    let label = if on { format!("{lumens} lm · {kelvin} K") } else { "Off".into() };
-    painter.text(panel.center_bottom() + egui::vec2(0.0, 30.0), egui::Align2::CENTER_TOP, label, egui::FontId::proportional(18.0), Color32::WHITE);
-}
 
 // ---------------------------------------------------------------- profiles, macros, settings
 
@@ -972,11 +999,11 @@ impl App {
                 section(ui, "Steps");
                 ui.horizontal(|ui| {
                     if recording == Some(idx) {
-                        if ui.button(RichText::new("■ Stop recording").color(Color32::RED)).clicked() {
+                        if ui.button(RichText::new("Stop recording").color(Color32::RED)).clicked() {
                             record = Some(false);
                         }
                         ui.label(RichText::new("Recording keys and mouse buttons…").color(ACCENT));
-                    } else if ui.button("● Record").clicked() {
+                    } else if ui.button("Record").clicked() {
                         record = Some(true);
                     }
                     if ui.button("Clear").clicked() {
@@ -1081,6 +1108,7 @@ fn trigger_label(t: Trigger) -> String {
         Trigger::Mouse(b) => b.label().to_string(),
         Trigger::Key(vk) => format!("Key {}", keys::name(vk)),
         Trigger::Joy(n) => format!("Wheel button {n}"),
+        Trigger::GKey(bit) => format!("G-key channel bit {bit}"),
     }
 }
 
@@ -1094,6 +1122,8 @@ fn default_summary(t: Trigger) -> String {
         Trigger::Mouse(MouseButton::Forward) => "Forward".into(),
         Trigger::Key(vk) => keys::name(vk),
         Trigger::Joy(n) => format!("Game button {n}"),
+        // Windows never sees these buttons, so without an assignment they do nothing.
+        Trigger::GKey(_) => "Unassigned".into(),
     }
 }
 
@@ -1264,6 +1294,25 @@ fn step_editor(ui: &mut Ui, id: usize, step: &mut Step) {
             ui.label("Type text");
             ui.add(egui::TextEdit::singleline(s).desired_width(240.0));
         }
+    }
+}
+
+/// winit subscribes the window to raw mouse/keyboard input, so every movement of any mouse
+/// (500 Hz on the G602) wakes and repaints the UI even when the pointer is elsewhere. We use
+/// none of it, so unsubscribe; normal pointer and keyboard window messages are unaffected.
+fn stop_raw_input() {
+    use windows_sys::Win32::UI::Input::{RegisterRawInputDevices, RAWINPUTDEVICE, RIDEV_REMOVE};
+    let devices = [0x02u16, 0x06].map(|usage| RAWINPUTDEVICE {
+        usUsagePage: 0x01,
+        usUsage: usage,
+        dwFlags: RIDEV_REMOVE,
+        hwndTarget: std::ptr::null_mut(),
+    });
+    let ok = unsafe {
+        RegisterRawInputDevices(devices.as_ptr(), devices.len() as u32, std::mem::size_of::<RAWINPUTDEVICE>() as u32)
+    };
+    if ok == 0 {
+        log::warn!("could not unregister raw input");
     }
 }
 

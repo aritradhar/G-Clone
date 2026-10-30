@@ -123,10 +123,11 @@ pub struct Channel {
 }
 
 impl Channel {
-    /// Opens every vendor-defined collection (usage page >= 0xFF00) in `infos`.
+    /// Opens every vendor-defined collection (usage page >= 0xFF00) in `infos`, except the
+    /// receiver's G-key channel (0xFF80), which carries no HID++ traffic.
     pub fn open(api: &HidApi, infos: &[&DeviceInfo]) -> Result<Self> {
         let mut handles = Vec::new();
-        for info in infos.iter().filter(|i| i.usage_page() >= 0xFF00) {
+        for info in infos.iter().filter(|i| i.usage_page() >= 0xFF00 && i.usage_page() != 0xFF80) {
             match info.open_device(api) {
                 Ok(dev) => handles.push(dev),
                 Err(e) => log::debug!(

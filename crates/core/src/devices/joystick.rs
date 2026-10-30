@@ -155,6 +155,21 @@ impl Joystick {
         })
     }
 
+    /// Current state, fetched without waiting for the device to send a report (the wheel
+    /// only reports on change, so a resting wheel would otherwise show nothing).
+    pub fn snapshot(&mut self) -> Option<JoyState> {
+        for report_id in [0u8, 1] {
+            self.buf.fill(0);
+            self.buf[0] = report_id;
+            let ok = unsafe { HidD_GetInputReport(self.handle, self.buf.as_mut_ptr().cast(), self.buf.len() as u32) };
+            if ok != 0 {
+                self.last.clone_from(&self.buf);
+                return Some(self.decode());
+            }
+        }
+        None
+    }
+
     /// Blocks until the next input report. `None` when the device is gone,
     /// `Some(None)` when the report is identical to the previous one.
     pub fn read(&mut self) -> Option<Option<JoyState>> {

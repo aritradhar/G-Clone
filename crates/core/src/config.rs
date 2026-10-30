@@ -36,6 +36,9 @@ pub enum Trigger {
     Key(u16),
     /// Game-controller button (1-based HID button number) on the wheel.
     Joy(u16),
+    /// Extra mouse button reported only on the receiver's vendor channel (bit number);
+    /// Windows never sees these (G602 G6–G11).
+    GKey(u8),
 }
 
 /// Physical G602 buttons shown on the mouse figure.

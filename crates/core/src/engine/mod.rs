@@ -1,6 +1,7 @@
 //! Background engine: one manager thread owns the devices, a hook thread handles input,
 //! a macro thread plays macros. The UI talks to it through [`Engine`].
 
+mod gkeys;
 mod hook;
 mod input;
 mod joy;
@@ -33,7 +34,11 @@ pub enum UiEvent {
 pub struct MouseStatus {
     pub dpi: u16,
     pub dpi_values: Vec<u16>,
+    /// Report interval actually in effect (ms); the Endurance switch forces 8 ms.
     pub report_rate: u8,
+    /// `Some(true)` while the hardware Performance/Endurance switch is on Endurance;
+    /// `None` when it can't be told apart (report rate set to 125 Hz anyway).
+    pub endurance: Option<bool>,
     pub report_rates: Vec<u8>,
     pub battery: Option<(u8, bool)>,
 }
@@ -203,7 +208,12 @@ struct MouseCaps {
     dpi_values: Vec<u16>,
     rates: Vec<u8>,
     battery: Option<Battery>,
+    /// Report interval read back from the mouse, if known.
+    actual_rate: Option<u8>,
 }
+
+/// Endurance mode on the G602 locks the report interval to 8 ms (125 Hz).
+const ENDURANCE_RATE_MS: u8 = 8;
 
 struct Manager {
     api: Option<HidApi>,
@@ -216,6 +226,8 @@ struct Manager {
     wheel: Option<Wheel>,
     wheel_pid: u16,
     joy_alive: Arc<AtomicBool>,
+    mouse_pid: u16,
+    gkeys_alive: Arc<AtomicBool>,
     applied: Applied,
     /// Profile currently in effect and the settings it resolved to.
     active: usize,
@@ -246,6 +258,8 @@ impl Manager {
             wheel: None,
             wheel_pid: 0,
             joy_alive: Arc::new(AtomicBool::new(false)),
+            mouse_pid: 0,
+            gkeys_alive: Arc::new(AtomicBool::new(false)),
             applied: Applied::default(),
             active: 0,
             current: None,
@@ -376,7 +390,8 @@ impl Manager {
         self.last_scan = Instant::now();
         let need = (self.mouse.is_none(), self.light.is_none(), self.wheel.is_none());
         let need_joy = !self.joy_alive.load(Ordering::SeqCst);
-        if need == (false, false, false) && !need_joy {
+        let need_gkeys = !self.gkeys_alive.load(Ordering::SeqCst);
+        if need == (false, false, false) && !need_joy && !need_gkeys {
             return;
         }
         let api = match self.api.as_mut() {
@@ -406,10 +421,12 @@ impl Manager {
                         dpi_values: m.dpi_values().unwrap_or_default(),
                         rates: m.report_rates().unwrap_or_default(),
                         battery: m.battery().ok(),
+                        actual_rate: None,
                     });
                     self.applied.dpi = None;
                     self.applied.rate = None;
                     self.mouse = Some(m);
+                    self.mouse_pid = pid;
                 }
                 Kind::Light => {
                     self.applied.light_on = None;
@@ -426,6 +443,9 @@ impl Manager {
                 }
             }
         }
+        if self.mouse.is_some() && !self.gkeys_alive.load(Ordering::SeqCst) {
+            gkeys::spawn(api, self.mouse_pid, self.gkeys_alive.clone());
+        }
         if self.wheel.is_some() && !self.joy_alive.load(Ordering::SeqCst) {
             if let Some(j) = Joystick::open(api, self.wheel_pid) {
                 joy::spawn(j, self.shared.clone(), self.joy_alive.clone());
@@ -437,6 +457,13 @@ impl Manager {
     /// shows the real value and we don't fight the change.
     fn read_back(&mut self) {
         let Some(m) = self.mouse.as_mut() else { return };
+        if let (Ok(rate), Some(caps)) = (m.report_rate(), self.mouse_caps.as_mut()) {
+            // Leaving Endurance mode: put the user's report rate back.
+            if rate != ENDURANCE_RATE_MS && Some(rate) != self.applied.rate {
+                self.applied.rate = None;
+            }
+            caps.actual_rate = Some(rate);
+        }
         let Ok(dpi) = m.dpi() else { return };
         if self.applied.dpi != Some(dpi) {
             self.applied.dpi = Some(dpi);
@@ -547,7 +574,11 @@ impl Manager {
             mouse: self.mouse_caps.as_ref().filter(|_| self.mouse.is_some()).map(|c| MouseStatus {
                 dpi: self.applied.dpi.unwrap_or(0),
                 dpi_values: c.dpi_values.clone(),
-                report_rate: self.applied.rate.unwrap_or(0),
+                report_rate: c.actual_rate.or(self.applied.rate).unwrap_or(0),
+                endurance: match (c.actual_rate, self.applied.rate) {
+                    (Some(_), Some(ENDURANCE_RATE_MS)) | (None, _) => None,
+                    (Some(actual), _) => Some(actual == ENDURANCE_RATE_MS),
+                },
                 report_rates: c.rates.clone(),
                 battery: c.battery.map(|b| (b.percent, b.charging != crate::devices::mouse::Charging::Discharging)),
             }),
