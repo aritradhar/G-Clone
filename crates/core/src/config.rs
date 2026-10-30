@@ -279,14 +279,17 @@ pub enum Action {
     Launch(String),
 }
 
-/// Media actions offered in the UI: (virtual-key code, label).
-pub const MEDIA_KEYS: [(u16, &str); 6] = [
+/// Media / browser actions offered in the UI: (virtual-key code, label).
+pub const MEDIA_KEYS: [(u16, &str); 9] = [
     (0xAF, "Volume up"),
     (0xAE, "Volume down"),
     (0xAD, "Mute"),
     (0xB3, "Play / Pause"),
     (0xB0, "Next track"),
     (0xB1, "Previous track"),
+    (0xA6, "Browser back"),
+    (0xA7, "Browser forward"),
+    (0xA8, "Browser refresh"),
 ];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -19,7 +19,7 @@ Working day to day on the hardware below. See [What's left](#whats-left) for gap
 | G602 button remapping (left/right/middle/G4 = back/G5 = forward) | ✅ |
 | G602 extra buttons G6–G11 (read from the receiver's vendor channel) | ✅ use **Detect** once per button |
 | Keystrokes recorded by pressing the combination | ✅ |
-| Media / volume actions | ✅ |
+| Media / browser actions (volume, mute, tracks, browser back / forward / refresh) | ✅ |
 | G602 Performance / Endurance switch | ✅ shown live; DPI lights turn green in Endurance |
 | G923 range, force-feedback strength, centering spring | ✅ |
 | G923 live wheel angle, pedals, buttons + button actions | ✅ |
@@ -48,7 +48,8 @@ Working day to day on the hardware below. See [What's left](#whats-left) for gap
 - Power, brightness (20–250 lm) and colour temperature (2700–6500 K)
 
 **Everywhere**
-- Assignments: keystrokes with modifiers, mouse buttons, media / volume keys, macros,
+- Assignments: keystrokes with modifiers, mouse buttons, media and browser keys (volume up /
+  down, mute, play / pause, next / previous track, browser back / forward / refresh), macros,
   DPI up / down / cycle / shift, light toggle, next profile, launch app or URL
 - Keystrokes are recorded by clicking the keystroke and pressing the combination
   (e.g. Ctrl + Win + →). The keys are blocked while recording, so shortcuts don't fire.

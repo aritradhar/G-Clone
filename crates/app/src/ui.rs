@@ -1204,7 +1204,7 @@ const ACTION_KINDS: [&str; 12] = [
     "Toggle Litra light",
     "Next profile",
     "Launch app / URL",
-    "Media / volume",
+    "Media / browser",
 ];
 
 fn action_kind(a: &Action) -> usize {
