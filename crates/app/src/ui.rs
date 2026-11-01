@@ -1,8 +1,10 @@
-﻿//! egui front end in a G HUB-like layout: device list on the left, a settings card, and a
+//! egui front end in a G HUB-like layout: device list on the left, a settings card, and a
 //! live device figure. The UI edits a copy of [`Config`]; changes go to the engine at once
 //! and are saved to disk shortly after.
 
 use crate::figures::{self, Callout, MouseView, WheelView, ACCENT};
+use crate::photo_figures;
+use crate::photos::Photos;
 use crate::{tray, AppShared};
 use eframe::egui::{self, Color32, Id, RichText, Ui};
 use gclone_core::config::*;
@@ -85,6 +87,8 @@ pub struct App {
     logo: egui::TextureHandle,
     last_frame: Instant,
     mouse_view: figures::MouseView,
+    /// Device photos from the local G HUB install, loaded on first use.
+    photos: Photos,
 }
 
 impl App {
@@ -101,15 +105,24 @@ impl App {
             egui::TextureOptions::LINEAR,
         );
         let cfg = shared.cfg.lock().unwrap().clone();
+        // Developer aid for screenshots: open straight on a page.
+        let start = std::env::var("GCLONE_START_PAGE").unwrap_or_default();
+        let (page, mouse_view, wheel_tab) = match start.as_str() {
+            "side" => (Page::Mouse, MouseView::Side, WheelTab::Steering),
+            "wheel" => (Page::Wheel, MouseView::Top, WheelTab::Steering),
+            "pedals" => (Page::Wheel, MouseView::Top, WheelTab::Pedals),
+            "buttons" => (Page::Wheel, MouseView::Top, WheelTab::Buttons),
+            _ => (Page::Mouse, MouseView::Top, WheelTab::Steering),
+        };
         Self {
             shared,
             cfg,
             status: Status::default(),
             joy: None,
             pressed: HashSet::new(),
-            page: Page::Mouse,
+            page,
             mouse_tab: MouseTab::Assignments,
-            wheel_tab: WheelTab::Steering,
+            wheel_tab,
             edit: 0,
             mouse_part: MousePart::G4,
             wheel_part: WheelPart::A,
@@ -124,7 +137,8 @@ impl App {
             autostart_error: None,
             logo,
             last_frame: Instant::now(),
-            mouse_view: figures::MouseView::Top,
+            mouse_view,
+            photos: Photos::default(),
         }
     }
 
@@ -445,7 +459,16 @@ impl App {
             }
         });
         let mode = self.status.mouse.as_ref().and_then(|m| m.endurance);
-        if let Some(part) = figures::mouse(ui, self.mouse_view, &callouts, mode) {
+        self.photos.ensure_mouse(ui.ctx());
+        let photo = match self.mouse_view {
+            MouseView::Top => self.photos.mouse_top.as_ref(),
+            MouseView::Side => self.photos.mouse_side.as_ref(),
+        };
+        let clicked = match photo {
+            Some(p) => photo_figures::mouse(ui, p, &callouts, mode, self.mouse_view == MouseView::Top),
+            None => figures::mouse(ui, self.mouse_view, &callouts, mode),
+        };
+        if let Some(part) = clicked {
             self.mouse_part = part;
             self.mouse_tab = MouseTab::Assignments;
         }
@@ -713,10 +736,13 @@ impl App {
     fn wheel_figure(&mut self, ui: &mut Ui) {
         let axes = self.cfg.hardware.axes.clone();
         if self.wheel_tab == WheelTab::Pedals {
-            figures::pedals(
-                ui,
-                [("Clutch", self.pedal(axes.clutch)), ("Brake", self.pedal(axes.brake)), ("Gas", self.pedal(axes.throttle))],
-            );
+            let values =
+                [("Clutch", self.pedal(axes.clutch)), ("Brake", self.pedal(axes.brake)), ("Gas", self.pedal(axes.throttle))];
+            self.photos.ensure_wheel(ui.ctx());
+            match &self.photos.pedals {
+                Some(p) => photo_figures::pedals(ui, p, values),
+                None => figures::pedals(ui, values),
+            }
             return;
         }
         let range = self.wheel_range() as f32;
@@ -739,7 +765,9 @@ impl App {
             })
             .collect();
         let view = WheelView { angle, range, show_arc: self.wheel_tab == WheelTab::Steering, parts: &parts, hat };
-        if let Some(p) = figures::wheel(ui, &view) {
+        self.photos.ensure_wheel(ui.ctx());
+        let photo = self.photos.wheel_front.as_ref().map(|f| (f, self.photos.wheel_base.as_ref()));
+        if let Some(p) = figures::wheel(ui, &view, photo) {
             self.wheel_part = p;
             self.joy_button = None;
             self.wheel_tab = WheelTab::Buttons;

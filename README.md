@@ -33,6 +33,13 @@ Working day to day on the hardware below. See [What's left](#whats-left) for gap
 
 ## Features
 
+**Device photos**
+- If Logitech G HUB is installed, G-Clone shows its high-resolution device photos (G602 top and
+  side, G923 wheel and pedals). It reads them from the local G HUB folder at runtime, together
+  with G HUB's button positions, so callouts sit exactly on each button. No Logitech images are
+  bundled with G-Clone or stored in this repository; without G HUB, vector drawings are used.
+  Photos are downscaled once and cached in the data folder.
+
 **Mouse (G602)**
 - Top and side views of the mouse with callouts showing each button's assignment.
   Click a button to reprogram it; pressed buttons light up live
@@ -132,7 +139,8 @@ cargo run -p gclone-core --example raw -- c537 2201 2 01    # send one raw HID++
 cargo test
 ```
 
-Set `GCLONE_TRACE_REPAINT=1` to log every UI frame together with what caused it.
+Set `GCLONE_TRACE_REPAINT=1` to log every UI frame together with what caused it, and
+`GCLONE_START_PAGE` (`side`, `wheel`, `pedals`, `buttons`) to open straight on a page.
 
 ## How it works
 
@@ -167,9 +175,13 @@ Known limitations, with the planned fix for each:
 2. **Wheel buttons still reach games.** An assignment adds an action on top of the button.
    *Plan:* document it, and offer "assign only while no game is focused" per profile. Hiding a
    button from games needs a driver.
-3. **Button numbers need confirming.** G923 face buttons beyond A/B/X/Y/LB/RB/View/Menu/LSB/RSB/Xbox,
-   and G602 G6–G11, need one **Detect** each. *Plan:* ship a confirmed default map once verified,
-   so Detect becomes optional.
+3. **G602 G6–G11 need one Detect each.** Their vendor-channel bits aren't confirmed from a
+   second source yet. (G923 buttons are now confirmed by G HUB's metadata, including
+   + = 19, − = 20, dial = 21–23.)
+4. **No hard stop at the operating range.** The range is applied, but turning past it gives no
+   resistance. Spring effects can't make the stop because the wheel reports no position past
+   the range. *Plan:* capture G HUB's command with USBPcap, or emulate the stop with a strong
+   push back while the steering sits at the edge.
 4. **Mode switch is inferred.** The G602 Performance / Endurance switch only sends a pulse;
    G-Clone infers the mode from the forced 125 Hz report rate. If you choose 125 Hz yourself,
    the mode shows as unknown.

@@ -180,22 +180,27 @@ impl WheelPart {
         }
     }
 
-    /// HID button number, following the Linux G920 mapping; others must be detected.
+    /// HID button number. Confirmed by G HUB's own G923 metadata, whose slot ids
+    /// (`g923-xbox_g<n>_m1`) are the HID button numbers.
     pub fn default_button(self) -> Option<u16> {
-        match self {
-            Self::A => Some(1),
-            Self::B => Some(2),
-            Self::X => Some(3),
-            Self::Y => Some(4),
-            Self::RB => Some(5),
-            Self::LB => Some(6),
-            Self::Menu => Some(7),
-            Self::View => Some(8),
-            Self::RSB => Some(9),
-            Self::LSB => Some(10),
-            Self::Xbox => Some(11),
-            _ => None,
-        }
+        Some(match self {
+            Self::A => 1,
+            Self::B => 2,
+            Self::X => 3,
+            Self::Y => 4,
+            Self::RB => 5,
+            Self::LB => 6,
+            Self::Menu => 7,
+            Self::View => 8,
+            Self::RSB => 9,
+            Self::LSB => 10,
+            Self::Xbox => 11,
+            Self::Plus => 19,
+            Self::Minus => 20,
+            Self::DialRight => 21,
+            Self::DialLeft => 22,
+            Self::Enter => 23,
+        })
     }
 }
 

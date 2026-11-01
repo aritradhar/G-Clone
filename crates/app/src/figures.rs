@@ -4,6 +4,7 @@
 //! keeps its size and proportions when the window is resized.
 
 use eframe::egui::{self, pos2, vec2, Align2, Color32, FontId, Painter, Pos2, Rect, Sense, Shape, Stroke, Ui, Vec2};
+use crate::photos::Photo;
 use gclone_core::config::{MousePart, WheelPart};
 
 pub const ACCENT: Color32 = Color32::from_rgb(0x00, 0xC8, 0xD7);
@@ -19,7 +20,7 @@ const TEXT_DIM: Color32 = Color32::from_rgb(0x9A, 0x9C, 0xA2);
 
 pub const MOUSE_CANVAS: Vec2 = vec2(660.0, 520.0);
 pub const WHEEL_CANVAS: Vec2 = vec2(600.0, 560.0);
-pub const PEDAL_CANVAS: Vec2 = vec2(600.0, 540.0);
+pub const PEDAL_CANVAS: Vec2 = vec2(600.0, 580.0);
 pub const LIGHT_CANVAS: Vec2 = vec2(420.0, 420.0);
 
 fn edge(width: f32) -> Stroke {
@@ -81,7 +82,7 @@ struct Label {
     align: LabelAlign,
 }
 
-const LABEL_W: f32 = 150.0;
+pub const LABEL_W: f32 = 150.0;
 
 /// Top view: body box at (171, 40) sized 317 x 440 on the canvas.
 const TOP_BOX: (f32, f32, f32, f32) = (171.0, 40.0, 317.0, 440.0);
@@ -339,7 +340,8 @@ fn part_glyph(p: WheelPart) -> (&'static str, Color32) {
 }
 
 /// Draws the wheel (rotated to the live angle) with optional range arc; returns a clicked part.
-pub fn wheel(ui: &mut Ui, view: &WheelView) -> Option<WheelPart> {
+/// With `photo` (front, base) the G HUB photo replaces the vector wheel.
+pub fn wheel(ui: &mut Ui, view: &WheelView, photo: Option<(&Photo, Option<&Photo>)>) -> Option<WheelPart> {
     let (painter, o) = canvas(ui, WHEEL_CANVAS);
     let r = WHEEL_R;
     let c = o + vec2(WHEEL_CANVAS.x / 2.0, 84.0 + r * 1.62);
@@ -369,6 +371,11 @@ pub fn wheel(ui: &mut Ui, view: &WheelView) -> Option<WheelPart> {
         painter.add(Shape::convex_polygon(vec![tip + dir * 12.0 + side, tip + dir * 12.0 - side, tip], TEXT, Stroke::NONE));
         painter.text(c - vec2(0.0, r * 1.30), Align2::CENTER_CENTER, format!("{:.0}", view.range), FontId::proportional(18.0), BLUE);
         painter.text(c - vec2(0.0, r * 1.17), Align2::CENTER_CENTER, "OPERATING RANGE (ANGLE)", FontId::proportional(13.0), BLUE);
+    }
+
+    if let Some((front, base)) = photo {
+        // Sized so the rim stays below the "OPERATING RANGE" label.
+        return crate::photo_figures::wheel(ui, &painter, front, base, c, r * 2.3, angle, view.parts, view.hat);
     }
 
     let (s, co) = angle.to_radians().sin_cos();

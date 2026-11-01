@@ -4,6 +4,8 @@
 mod autostart;
 mod figures;
 mod icon;
+mod photo_figures;
+mod photos;
 mod tray;
 mod ui;
 
