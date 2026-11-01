@@ -797,6 +797,7 @@ impl App {
 
     fn wheel_steering(&mut self, ui: &mut Ui) {
         let actual = self.wheel_sensitivity();
+        let paused_for_ghub = self.status.haptics_paused_for_ghub;
         let default = self.cfg.profiles[0].wheel.clone().unwrap_or_default();
         let edit = self.edit;
         let Some(w) = override_section(ui, edit, &mut self.cfg.profiles[edit].wheel, &default) else { return };
@@ -834,6 +835,12 @@ impl App {
         section(ui, "Sound haptics (TRUEFORCE-style)");
         ui.checkbox(&mut w.haptics.enabled, "Vibrate the wheel with the game's sound");
         let mut haptic_test = false;
+        if w.haptics.enabled && paused_for_ghub {
+            ui.label(
+                RichText::new("Paused: G HUB is running, so a game may be using real TRUEFORCE. Resumes when G HUB closes.")
+                    .color(WARN),
+            );
+        }
         if w.haptics.enabled {
             slider_row(ui, egui::Slider::new(&mut w.haptics.strength, 0..=100).suffix(" %").text("strength"));
             ui.horizontal(|ui| {
@@ -844,6 +851,7 @@ impl App {
                 });
                 haptic_test = ui.button("Test").clicked();
             });
+            ui.checkbox(&mut w.haptics.pause_with_ghub, "Pause while G HUB is running (never stack with real TRUEFORCE)");
             let level = self.shared.engine.haptic_level();
             ui.add(egui::ProgressBar::new(level).desired_width(ui.available_width()).text(if level > 0.0 { "" } else { "waiting for sound…" }));
             // Keep the meter moving while this section is visible.

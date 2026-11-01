@@ -8,6 +8,7 @@ mod input;
 mod joy;
 mod macros;
 pub mod osd;
+mod procs;
 
 pub use joy::JoyLive;
 
@@ -82,6 +83,8 @@ pub struct Status {
     pub foreground: String,
     pub recent_apps: Vec<String>,
     pub last_error: Option<String>,
+    /// Sound haptics is on but paused because G HUB's agent (real TRUEFORCE) is running.
+    pub haptics_paused_for_ghub: bool,
 }
 
 pub(crate) enum Cmd {
@@ -289,6 +292,9 @@ struct Manager {
     tx: Sender<Cmd>,
     /// Running sound-haptics capture, while enabled and the wheel is connected.
     haptics: Option<haptics::Haptics>,
+    /// G HUB's agent is running, so a game may be streaming real TRUEFORCE.
+    ghub_running: bool,
+    haptics_paused: bool,
     api: Option<HidApi>,
     cfg: Config,
     shared: Arc<Shared>,
@@ -323,6 +329,8 @@ impl Manager {
         Self {
             tx,
             haptics: None,
+            ghub_running: false,
+            haptics_paused: false,
             api: None,
             cfg,
             shared,
@@ -533,6 +541,9 @@ impl Manager {
 
     fn rescan(&mut self) {
         self.last_scan = Instant::now();
+        // Only worth a process snapshot while sound haptics could actually run.
+        let haptics_wanted = self.current.as_ref().is_some_and(|c| c.wheel.haptics.enabled && c.wheel.haptics.pause_with_ghub);
+        self.ghub_running = haptics_wanted && procs::is_running(procs::GHUB_AGENT);
         let need = (self.mouse.is_none(), self.light.is_none(), self.wheel.is_none());
         let need_joy = !self.joy_alive.load(Ordering::SeqCst);
         let need_gkeys = !self.gkeys_alive.load(Ordering::SeqCst);
@@ -708,9 +719,11 @@ impl Manager {
     }
 
     fn sync_wheel(&mut self, s: &WheelSettings) -> hidpp::Result<()> {
-        // Sound haptics: capture runs only while enabled and the wheel is present.
+        // Sound haptics: capture runs only while enabled and the wheel is present, and never
+        // alongside G HUB's agent, through which games stream real TRUEFORCE.
         let h = s.haptics;
-        if h.enabled && self.wheel.is_some() {
+        self.haptics_paused = h.enabled && h.pause_with_ghub && self.ghub_running;
+        if h.enabled && self.wheel.is_some() && !self.haptics_paused {
             if self.haptics.as_ref().map(|x| x.band()) != Some(h.band) {
                 self.haptics = None; // stop the old capture before starting a new one
                 self.haptics = Some(haptics::Haptics::start(h.band, h.strength, self.tx.clone()));
@@ -811,6 +824,7 @@ impl Manager {
             foreground: self.foreground.clone(),
             recent_apps: self.recent.clone(),
             last_error: self.last_error.clone(),
+            haptics_paused_for_ghub: self.haptics_paused,
         };
         let mut cur = self.shared.status.lock().unwrap();
         if *cur != status {

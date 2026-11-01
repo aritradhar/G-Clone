@@ -350,11 +350,15 @@ pub struct SoundHaptics {
     /// 0–100 %.
     pub strength: u8,
     pub band: HapticBand,
+    /// Pause while G HUB's agent runs: real TRUEFORCE games stream through it, and the
+    /// two must never stack.
+    #[serde(default = "default_true")]
+    pub pause_with_ghub: bool,
 }
 
 impl Default for SoundHaptics {
     fn default() -> Self {
-        Self { enabled: false, strength: 50, band: HapticBand::EngineAndRoad }
+        Self { enabled: false, strength: 50, band: HapticBand::EngineAndRoad, pause_with_ghub: true }
     }
 }
 
@@ -674,7 +678,7 @@ mod tests {
             centering: 20,
             sensitivity: AxisSensitivity { steering: Some(30), brake: Some(56), ..Default::default() },
             rev_lights: RevLights::Accelerator,
-            haptics: SoundHaptics { enabled: true, strength: 70, band: HapticBand::Impacts },
+            haptics: SoundHaptics { enabled: true, strength: 70, band: HapticBand::Impacts, pause_with_ghub: true },
         });
         c.profiles.push(p);
         c.macros.push(Macro {

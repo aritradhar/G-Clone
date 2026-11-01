@@ -2,7 +2,7 @@
 
 A fast, lightweight replacement for Logitech G HUB, written in Rust.
 
-G-Clone talks to Logitech devices directly over HID++ and ships as a single ~7 MB
+G-Clone talks to Logitech devices directly over HID++ and ships as a single ~8 MB
 executable. The window opens in about 80 ms. When the window is closed, G-Clone keeps
 running in the system tray using about 7 MB of RAM and next to no CPU.
 
@@ -67,7 +67,9 @@ Working day to day on the hardware below. See [What's left](#whats-left) for gap
   engine & road, or the full low end. There's a test and a live meter. Volume is normalised
   automatically, and capture stops entirely when it's off. Real TRUEFORCE is different: games
   stream it through Logitech's SDK, which only talks to G HUB, so TRUEFORCE games still need
-  G HUB for that.
+  G HUB for that. **It never stacks with real TRUEFORCE:** while G HUB's agent
+  (`lghub_agent.exe`) runs, sound haptics pauses automatically and the UI says so. This is
+  default on; a game's profile can also switch sound haptics off.
 - Wheel buttons can trigger actions (keystrokes, macros, profile switching, …)
 
 **Light (Litra Glow)**
@@ -101,7 +103,7 @@ Measured on the release build (Windows 11, 4K display at 150 %, NVIDIA GPU):
 
 | | |
 |---|---|
-| Executable | 6.8 MB |
+| Executable | 7.7 MB |
 | Open window | ~80 ms warm, ~1.4 s cold |
 | Window open, idle | ~0 % CPU; ~80 MB RAM (about half is the GPU driver) |
 | Window open, mouse moving over it | capped at 60 fps, ~1.8 ms CPU per frame |
@@ -116,6 +118,8 @@ How it stays light:
 - The low-level input hooks are installed only while a binding, Detect / recording, or a live
   device page needs them.
 - Device threads block on I/O and wake only when there is work to do.
+- Sound haptics captures audio only while it's switched on, and sends the wheel an update only
+  when the vibration actually changes.
 
 ## Building
 
@@ -144,7 +148,9 @@ cargo run -p gclone-core --example probe                    # dump every Logitec
 cargo run -p gclone-core --example status                   # read current settings of all devices
 cargo run -p gclone-core --example axes -- 10               # print live wheel / pedal input for 10 s
 cargo run -p gclone-core --example listen -- c537 30        # print raw reports from every readable collection
+cargo run -p gclone-core --example listen -- c26e 300 hidpp # only HID++ replies, timestamped (e.g. to G HUB's commands)
 cargo run -p gclone-core --example raw -- c537 2201 2 01    # send one raw HID++ call
+cargo run -p gclone-core --example osd                      # show the DPI popup once
 cargo test
 ```
 
@@ -159,10 +165,12 @@ crates/core   gclone-core
               short/long/very-long reports, matches replies, queues notifications
   devices/    mouse, litra, wheel drivers + joystick reader (Windows HidP_* parser)
   engine/     device manager thread (hot-plug, diff-only writes, read-back), on-demand
-              low-level input hooks, G-key reader, wheel input thread, macro player,
+              low-level input hooks, G-key reader, wheel input thread (also drives the
+              rev lights), sound haptics (audio loopback), DPI popup, macro player,
               foreground-app watcher
   config.rs   profiles / bindings / macros / learned hardware maps as TOML
-crates/app    gclone: egui UI, device figures, tray, autostart
+crates/app    gclone: egui UI, device figures (G HUB photos or vector fallback), tray,
+              autostart
 ```
 
 - **Remapping.** The G602 has no HID++ button diverting, so left/right/middle/back/forward are
@@ -172,6 +180,22 @@ crates/app    gclone: egui UI, device figures, tray, autostart
   signal, because only that one can be blocked and replaced.
 - **Live input.** The wheel and pedals are read from the wheel's joystick HID collection in
   shared mode, so games keep working normally.
+- **Sound haptics.** WASAPI loopback (via `cpal`) captures what the PC plays. A band-pass,
+  an envelope normalised to the overall loudness, and a zero-crossing pitch estimate drive a
+  sine vibration effect on the wheel. The effect is updated in place, layered on the game's
+  force feedback.
+
+### Protocol notes (undocumented G923 / G602 features)
+
+Worked out on real hardware, partly by watching the wheel's replies to G HUB:
+
+| Feature | What it does | How |
+|---|---|---|
+| `0x80A3` | Per-axis sensitivity | fn1(i) → axis usage; fn2(i) → `[0x64, value]`; fn3 `[i, 0x64, value]`. Pedals are stored as 100 − value |
+| `0x807A` | 5 rev lights | fn3 `[2]` hands them to the host (`[0]` back to the wheel); fn6 `[0, mask]` sets them, one bit per light |
+| `0x8123` | Force feedback | Range fn5/6, gains fn7/8, effects fn2 (upload or update in place) / fn4 (remove). Sound haptics uses a periodic sine effect |
+| `FF80:0080` | G602 G-keys | Receiver vendor collection sends `80 <mask lo> <mask hi> ..`; the mode switch pulses bit 23 |
+| `0x2201` v0 | G602 DPI | Sensor number 1; the list reply is `min, step, max` |
 
 ## What's left
 
@@ -191,25 +215,23 @@ Known limitations, with the planned fix for each:
    resistance. Spring effects can't make the stop because the wheel reports no position past
    the range. *Plan:* capture G HUB's command with USBPcap, or emulate the stop with a strong
    push back while the steering sits at the edge.
-4. **Mode switch is inferred.** The G602 Performance / Endurance switch only sends a pulse;
+5. **Mode switch is inferred.** The G602 Performance / Endurance switch only sends a pulse;
    G-Clone infers the mode from the forced 125 Hz report rate. If you choose 125 Hz yourself,
    the mode shows as unknown.
-5. **Real TRUEFORCE and combined pedals are missing.** TRUEFORCE games stream their haptics
-   through Logitech's SDK to G HUB's service, which G-Clone can't stand in for; sound haptics is
-   the G HUB-free alternative. Sensitivity was decoded by watching the
-   wheel's replies to G HUB (undocumented feature `0x80A3`: fn2(axis) → `[0x64, value]`, fn3
-   `[axis, 0x64, value]`; pedals stored as 100 − value). The rev lights (`0x807A`) were found by
-   careful testing: fn3 `[2]` hands them to the host (`[0]` back to the wheel), then fn6
-   `[0, mask]` sets the 5 lights (one bit each). *Plan:* capture G HUB while changing the
-   TRUEFORCE and combined-pedals settings. Game telemetry for the rev lights would also be nice.
-6. **G602 lighting: not controllable (investigated).** The mouse has one LED zone on an early,
+6. **Real TRUEFORCE needs G HUB.** TRUEFORCE games stream their haptics through Logitech's SDK
+   to G HUB's service, which G-Clone can't stand in for. Sound haptics is the G HUB-free
+   alternative, and it pauses itself whenever G HUB's agent is running, so the two never stack.
+7. **Combined pedals isn't supported.** *Plan:* watch G HUB's replies while toggling it, the
+   same way sensitivity was decoded.
+8. **G602 lighting: not controllable (investigated).** The mouse has one LED zone on an early,
    undocumented version of `0x8070`. It accepts effects 1–5 but nothing changes visibly, and
    G HUB offers no lighting settings for the G602 either. The DPI lights are shown as status
    only (green in Endurance mode).
-7. **No installer.** *Plan:* a small installer or a `winget` manifest that puts the exe and its
+9. **No installer.** *Plan:* a small installer or a `winget` manifest that puts the exe and its
    `data` folder in one place.
-8. **G HUB conflicts.** Both apps fight if G HUB is running. *Plan:* detect `lghub*.exe` and
-   offer to quit it.
+10. **G HUB conflicts.** Both apps fight if G HUB is running. *Plan:* detect `lghub*.exe` and
+    offer to quit it.
+11. **Ideas:** drive the rev lights from game telemetry (e.g. Forza / F1 UDP output) for real RPM.
 
 ## Credits
 
