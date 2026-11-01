@@ -40,6 +40,7 @@ const FN_SET_APERTURE: u8 = 0x6;
 const FN_GET_GAINS: u8 = 0x7;
 const FN_SET_GAINS: u8 = 0x8;
 
+const EFFECT_SINE: u8 = 0x01;
 const EFFECT_SPRING: u8 = 0x06;
 const EFFECT_AUTOSTART: u8 = 0x80;
 
@@ -70,6 +71,8 @@ pub struct Wheel {
     pub dev: Device,
     /// Slot of our centering-spring effect, if one is loaded.
     spring_slot: Option<u8>,
+    /// Slot of our vibration (sound haptics) effect, if one is loaded.
+    vibration_slot: Option<u8>,
     /// AxisSensitivity (0x80A3) entry index per [`Axis::ALL`], if the wheel has one.
     axis_index: [Option<u8>; 4],
 }
@@ -77,7 +80,7 @@ pub struct Wheel {
 impl Wheel {
     pub fn new(mut dev: Device) -> Self {
         let axis_index = Self::find_axes(&mut dev);
-        Self { dev, spring_slot: None, axis_index }
+        Self { dev, spring_slot: None, vibration_slot: None, axis_index }
     }
 
     /// 0x80A3 fn0 → entry count; fn1(i) → `00 01 <usage hi> <usage lo> <bits> ..`.
@@ -186,9 +189,43 @@ impl Wheel {
         Ok(())
     }
 
+    /// Runs (or updates) a continuous sine vibration; `magnitude` 0 removes it.
+    /// `magnitude` is 0..=0x7FFF, `period_ms` the vibration period (1000 / Hz).
+    /// Layout follows the Linux driver's periodic effect; duration 0 = until changed.
+    pub fn set_vibration(&mut self, magnitude: u16, period_ms: u16) -> Result<()> {
+        if magnitude == 0 {
+            if let Some(slot) = self.vibration_slot.take() {
+                self.dev.call(f::FORCE_FEEDBACK, FN_DESTROY_EFFECT, &[slot])?;
+            }
+            return Ok(());
+        }
+        let m = magnitude.min(0x7FFF).to_be_bytes();
+        let period = period_ms.max(1).to_be_bytes();
+        let mut p = [0u8; 20];
+        // Slot 0 creates a new effect; an existing slot is updated in place.
+        p[0] = self.vibration_slot.unwrap_or(0);
+        p[1] = EFFECT_SINE | EFFECT_AUTOSTART;
+        p[6] = m[0];
+        p[7] = m[1];
+        p[10] = period[0];
+        p[11] = period[1];
+        match self.dev.call(f::FORCE_FEEDBACK, FN_DOWNLOAD_EFFECT, &p) {
+            Ok(r) => {
+                self.vibration_slot = Some(r.params()[0]);
+                Ok(())
+            }
+            Err(e) => {
+                // A game may have reset all effects; start afresh next time.
+                self.vibration_slot = None;
+                Err(e)
+            }
+        }
+    }
+
     /// Stops and removes every effect on the wheel.
     pub fn reset_effects(&mut self) -> Result<()> {
         self.spring_slot = None;
+        self.vibration_slot = None;
         self.dev.call(f::FORCE_FEEDBACK, FN_RESET_ALL, &[])?;
         Ok(())
     }

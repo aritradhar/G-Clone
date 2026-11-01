@@ -831,6 +831,31 @@ impl App {
         if test {
             self.shared.engine.test_rev_lights();
         }
+        section(ui, "Sound haptics (TRUEFORCE-style)");
+        ui.checkbox(&mut w.haptics.enabled, "Vibrate the wheel with the game's sound");
+        let mut haptic_test = false;
+        if w.haptics.enabled {
+            slider_row(ui, egui::Slider::new(&mut w.haptics.strength, 0..=100).suffix(" %").text("strength"));
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt("haptic_band").width(210.0).selected_text(w.haptics.band.label()).show_ui(ui, |ui| {
+                    for band in HapticBand::ALL {
+                        ui.selectable_value(&mut w.haptics.band, band, band.label());
+                    }
+                });
+                haptic_test = ui.button("Test").clicked();
+            });
+            let level = self.shared.engine.haptic_level();
+            ui.add(egui::ProgressBar::new(level).desired_width(ui.available_width()).text(if level > 0.0 { "" } else { "waiting for sound…" }));
+            // Keep the meter moving while this section is visible.
+            ui.ctx().request_repaint_after(Duration::from_millis(50));
+        }
+        ui.label(
+            RichText::new("Turns low rumble in whatever is playing into vibration, on top of the game's force feedback. Works in any game, no G HUB needed.")
+                .weak(),
+        );
+        if haptic_test {
+            self.shared.engine.test_haptics();
+        }
         section(ui, "Centering spring strength");
         slider_row(ui, egui::Slider::new(&mut w.centering, 0..=100).suffix(" %"));
         ui.label(RichText::new("Pulls the wheel to center while no game drives force feedback. 0 = off.").weak());

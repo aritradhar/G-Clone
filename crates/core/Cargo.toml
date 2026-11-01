@@ -11,6 +11,8 @@ log = "0.4"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 crossbeam-channel = "0.5"
+# WASAPI loopback capture of what the PC is playing, for sound haptics.
+cpal = "0.15"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [

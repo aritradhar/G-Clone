@@ -24,12 +24,14 @@ Working day to day on the hardware below. See [What's left](#whats-left) for gap
 | G923 range, force-feedback strength, centering spring | ✅ |
 | G923 steering and pedal sensitivity (same values as G HUB's sliders) | ✅ |
 | G923 rev lights: off, accelerator, steering angle, or left to games | ✅ |
+| Sound haptics (TRUEFORCE-style vibration from game audio, any game) | ✅ |
 | On-screen DPI popup when DPI changes | ✅ |
 | G923 live wheel angle, pedals, buttons + button actions | ✅ |
 | Litra Glow power, brightness, colour temperature | ✅ |
 | Macros (record / edit, once / while held / toggle) | ✅ |
 | Per-app profiles, tray, start with Windows, single instance | ✅ |
-| G923 TRUEFORCE, combined pedals | ❌ protocol unknown |
+| Logitech TRUEFORCE stream from TRUEFORCE games | ❌ needs G HUB (see below) |
+| G923 combined pedals | ❌ protocol unknown |
 
 ## Features
 
@@ -59,6 +61,13 @@ Working day to day on the hardware below. See [What's left](#whats-left) for gap
 - Rev (RPM) lights: leave them to the wheel and games, keep them off, or have them fill with
   the accelerator or the steering angle. A Test button runs a sweep; quitting hands them back
   to the wheel
+- **Sound haptics (TRUEFORCE-style):** turns the low rumble in whatever the PC is playing
+  (engine, kerbs, impacts) into wheel vibration, layered on the game's own force feedback. It
+  works in every game without G HUB. You can set the strength and choose a range: impacts,
+  engine & road, or the full low end. There's a test and a live meter. Volume is normalised
+  automatically, and capture stops entirely when it's off. Real TRUEFORCE is different: games
+  stream it through Logitech's SDK, which only talks to G HUB, so TRUEFORCE games still need
+  G HUB for that.
 - Wheel buttons can trigger actions (keystrokes, macros, profile switching, …)
 
 **Light (Litra Glow)**
@@ -185,7 +194,9 @@ Known limitations, with the planned fix for each:
 4. **Mode switch is inferred.** The G602 Performance / Endurance switch only sends a pulse;
    G-Clone infers the mode from the forced 125 Hz report rate. If you choose 125 Hz yourself,
    the mode shows as unknown.
-5. **TRUEFORCE and combined pedals are missing.** Sensitivity was decoded by watching the
+5. **Real TRUEFORCE and combined pedals are missing.** TRUEFORCE games stream their haptics
+   through Logitech's SDK to G HUB's service, which G-Clone can't stand in for; sound haptics is
+   the G HUB-free alternative. Sensitivity was decoded by watching the
    wheel's replies to G HUB (undocumented feature `0x80A3`: fn2(axis) → `[0x64, value]`, fn3
    `[axis, 0x64, value]`; pedals stored as 100 − value). The rev lights (`0x807A`) were found by
    careful testing: fn3 `[2]` hands them to the host (`[0]` back to the wheel), then fn6

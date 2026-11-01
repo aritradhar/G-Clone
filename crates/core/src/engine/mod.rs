@@ -2,6 +2,7 @@
 //! a macro thread plays macros. The UI talks to it through [`Engine`].
 
 mod gkeys;
+mod haptics;
 mod hook;
 mod input;
 mod joy;
@@ -90,6 +91,9 @@ pub(crate) enum Cmd {
     /// New rev-light mask computed from live wheel input.
     RevLights(u8),
     RevTest,
+    /// Sound-haptics vibration update (magnitude 0 = stop).
+    Haptic { magnitude: u16, period_ms: u16 },
+    HapticTest,
     Shutdown,
 }
 
@@ -204,6 +208,16 @@ impl Engine {
     pub fn test_rev_lights(&self) {
         let _ = self.tx.send(Cmd::RevTest);
     }
+
+    /// Plays a short test vibration on the wheel.
+    pub fn test_haptics(&self) {
+        let _ = self.tx.send(Cmd::HapticTest);
+    }
+
+    /// Current sound-haptics level 0..1 (0 while off or silent).
+    pub fn haptic_level(&self) -> f32 {
+        haptics::level()
+    }
 }
 
 /// Builds a first-run config from the devices' current settings so nothing changes on launch.
@@ -273,6 +287,8 @@ const ENDURANCE_RATE_MS: u8 = 8;
 struct Manager {
     /// Own command channel, handed to the wheel input thread for rev-light updates.
     tx: Sender<Cmd>,
+    /// Running sound-haptics capture, while enabled and the wheel is connected.
+    haptics: Option<haptics::Haptics>,
     api: Option<HidApi>,
     cfg: Config,
     shared: Arc<Shared>,
@@ -306,6 +322,7 @@ impl Manager {
         let _ = macro_tx.send(MacroCmd::Set(cfg.macros.clone()));
         Self {
             tx,
+            haptics: None,
             api: None,
             cfg,
             shared,
@@ -381,12 +398,24 @@ impl Manager {
                     let res = self.rev_test();
                     self.check(Kind::Wheel, res);
                 }
+                Ok(Cmd::Haptic { magnitude, period_ms }) => {
+                    if let Some(w) = self.wheel.as_mut() {
+                        let res = w.set_vibration(magnitude, period_ms);
+                        self.check(Kind::Wheel, res);
+                    }
+                }
+                Ok(Cmd::HapticTest) => {
+                    let res = self.haptic_test();
+                    self.check(Kind::Wheel, res);
+                }
                 Ok(Cmd::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
                 Err(RecvTimeoutError::Timeout) => {}
             }
         }
+        self.haptics = None;
         // Never leave the rev lights frozen under our control after quitting.
         if let Some(w) = self.wheel.as_mut() {
+            let _ = w.set_vibration(0, 0);
             if !matches!(self.applied.rev_mode, None | Some(RevLights::Wheel)) {
                 let _ = w.set_rev_control(false);
             }
@@ -404,6 +433,16 @@ impl Manager {
             }
         }
         Ok(())
+    }
+
+    /// A short vibration sequence: fast strong buzz, slower rumble, then a quick fade.
+    fn haptic_test(&mut self) -> hidpp::Result<()> {
+        let Some(w) = self.wheel.as_mut() else { return Ok(()) };
+        for (mag, period, ms) in [(0x6000, 25, 700), (0x3800, 66, 700), (0x2000, 33, 300), (0x1000, 33, 300)] {
+            w.set_vibration(mag, period)?;
+            thread::sleep(Duration::from_millis(ms));
+        }
+        w.set_vibration(0, 0)
     }
 
     /// Rev-counter sweep twice and three flashes, then the profile's mode is re-applied.
@@ -669,6 +708,19 @@ impl Manager {
     }
 
     fn sync_wheel(&mut self, s: &WheelSettings) -> hidpp::Result<()> {
+        // Sound haptics: capture runs only while enabled and the wheel is present.
+        let h = s.haptics;
+        if h.enabled && self.wheel.is_some() {
+            if self.haptics.as_ref().map(|x| x.band()) != Some(h.band) {
+                self.haptics = None; // stop the old capture before starting a new one
+                self.haptics = Some(haptics::Haptics::start(h.band, h.strength, self.tx.clone()));
+            }
+            if let Some(x) = &self.haptics {
+                x.set_strength(h.strength);
+            }
+        } else if self.haptics.take().is_some() {
+            log::info!("sound haptics stopped");
+        }
         // Tell the wheel input thread what the rev lights should follow.
         let axes = &self.cfg.hardware.axes;
         *self.shared.rev.lock().unwrap() = match s.rev_lights {

@@ -339,6 +339,56 @@ pub struct WheelSettings {
     pub sensitivity: AxisSensitivity,
     #[serde(default)]
     pub rev_lights: RevLights,
+    #[serde(default)]
+    pub haptics: SoundHaptics,
+}
+
+/// TRUEFORCE-style vibration made from the sound the PC is playing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SoundHaptics {
+    pub enabled: bool,
+    /// 0–100 %.
+    pub strength: u8,
+    pub band: HapticBand,
+}
+
+impl Default for SoundHaptics {
+    fn default() -> Self {
+        Self { enabled: false, strength: 50, band: HapticBand::EngineAndRoad }
+    }
+}
+
+/// Which part of the sound becomes vibration.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HapticBand {
+    /// Deep thumps only: impacts, kerbs, landings.
+    Impacts,
+    /// Engine note and road texture.
+    #[default]
+    EngineAndRoad,
+    /// Everything low: more detail, also picks up music bass.
+    FullLowEnd,
+}
+
+impl HapticBand {
+    pub const ALL: [HapticBand; 3] = [Self::Impacts, Self::EngineAndRoad, Self::FullLowEnd];
+
+    /// (low, high) cutoff in Hz.
+    pub fn range_hz(self) -> (f32, f32) {
+        match self {
+            Self::Impacts => (20.0, 60.0),
+            Self::EngineAndRoad => (25.0, 120.0),
+            Self::FullLowEnd => (20.0, 200.0),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Impacts => "Impacts (20–60 Hz)",
+            Self::EngineAndRoad => "Engine & road (25–120 Hz)",
+            Self::FullLowEnd => "Full low end (20–200 Hz)",
+        }
+    }
 }
 
 /// What the G923's 5 rev lights show.
@@ -403,6 +453,7 @@ impl Default for WheelSettings {
             centering: 0,
             sensitivity: AxisSensitivity::default(),
             rev_lights: RevLights::default(),
+            haptics: SoundHaptics::default(),
         }
     }
 }
@@ -623,6 +674,7 @@ mod tests {
             centering: 20,
             sensitivity: AxisSensitivity { steering: Some(30), brake: Some(56), ..Default::default() },
             rev_lights: RevLights::Accelerator,
+            haptics: SoundHaptics { enabled: true, strength: 70, band: HapticBand::Impacts },
         });
         c.profiles.push(p);
         c.macros.push(Macro {
