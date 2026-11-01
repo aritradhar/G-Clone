@@ -20,6 +20,8 @@ pub const MOUSE_BUTTON_SPY: u16 = 0x8110;
 pub const FORCE_FEEDBACK: u16 = 0x8123;
 /// Undocumented; per-axis sensitivity on the G923 (what G HUB's sensitivity sliders write).
 pub const AXIS_SENSITIVITY: u16 = 0x80A3;
+/// Undocumented; the G923's 5 RPM / rev lights.
+pub const REV_LIGHTS: u16 = 0x807A;
 
 pub fn name(id: u16) -> &'static str {
     match id {
@@ -52,6 +54,7 @@ pub fn name(id: u16) -> &'static str {
         0x8060 => "AdjustableReportRate",
         0x8061 => "ExtendedAdjustableReportRate",
         0x8070 => "ColorLedEffects",
+        0x807A => "RevLights (undocumented)",
         0x8071 => "RgbEffects",
         0x8080 => "PerKeyLighting",
         0x8090 => "ModeStatus",

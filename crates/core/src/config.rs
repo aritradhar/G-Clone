@@ -332,6 +332,34 @@ pub struct WheelSettings {
     /// Per-axis sensitivity 0–100; `None` leaves the wheel's current value alone.
     #[serde(default)]
     pub sensitivity: AxisSensitivity,
+    #[serde(default)]
+    pub rev_lights: RevLights,
+}
+
+/// What the G923's 5 rev lights show.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RevLights {
+    /// Left to the wheel and to games (G-Clone doesn't touch them).
+    #[default]
+    Wheel,
+    Off,
+    /// Fill with accelerator pedal travel.
+    Accelerator,
+    /// Fill as the wheel turns toward full lock.
+    Steering,
+}
+
+impl RevLights {
+    pub const ALL: [RevLights; 4] = [Self::Wheel, Self::Off, Self::Accelerator, Self::Steering];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Wheel => "Wheel / game",
+            Self::Off => "Off",
+            Self::Accelerator => "Accelerator",
+            Self::Steering => "Steering angle",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -364,7 +392,13 @@ impl AxisSensitivity {
 
 impl Default for WheelSettings {
     fn default() -> Self {
-        Self { range: 900, strength: 100, centering: 0, sensitivity: AxisSensitivity::default() }
+        Self {
+            range: 900,
+            strength: 100,
+            centering: 0,
+            sensitivity: AxisSensitivity::default(),
+            rev_lights: RevLights::default(),
+        }
     }
 }
 
@@ -425,8 +459,15 @@ pub struct Config {
     pub pinned_profile: Option<String>,
     #[serde(default)]
     pub start_hidden: bool,
+    /// Show a small on-screen popup with the new DPI whenever it changes.
+    #[serde(default = "default_true")]
+    pub dpi_popup: bool,
     #[serde(default)]
     pub hardware: Hardware,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for Config {
@@ -441,6 +482,7 @@ impl Default for Config {
             macros: Vec::new(),
             pinned_profile: None,
             start_hidden: false,
+            dpi_popup: true,
             hardware: Hardware::default(),
         }
     }
@@ -575,6 +617,7 @@ mod tests {
             strength: 80,
             centering: 20,
             sensitivity: AxisSensitivity { steering: Some(30), brake: Some(56), ..Default::default() },
+            rev_lights: RevLights::Accelerator,
         });
         c.profiles.push(p);
         c.macros.push(Macro {

@@ -6,6 +6,31 @@ use crate::hidpp::{features as f, Device, Result};
 pub const RANGE_MIN: u16 = 40;
 pub const RANGE_MAX: u16 = 900;
 
+/// Number of rev lights and the mask lighting all of them.
+pub const REV_COUNT: u8 = 5;
+pub const REV_ALL: u8 = 0x1F;
+
+/// Mask lighting the first `fraction` (0..1) of the rev lights, like a rev counter.
+pub fn rev_mask(fraction: f32) -> u8 {
+    let lit = (fraction.clamp(0.0, 1.0) * REV_COUNT as f32).round() as u8;
+    ((1u16 << lit) - 1) as u8
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rev_mask_fills_like_a_rev_counter() {
+        assert_eq!(rev_mask(0.0), 0);
+        assert_eq!(rev_mask(0.2), 0b00001);
+        assert_eq!(rev_mask(0.6), 0b00111);
+        assert_eq!(rev_mask(1.0), REV_ALL);
+        assert_eq!(rev_mask(-1.0), 0);
+        assert_eq!(rev_mask(7.0), REV_ALL);
+    }
+}
+
 const FN_GET_INFO: u8 = 0x0;
 const FN_RESET_ALL: u8 = 0x1;
 const FN_DOWNLOAD_EFFECT: u8 = 0x2;
@@ -72,6 +97,19 @@ impl Wheel {
     fn axis(&self, axis: Axis) -> Result<u8> {
         let slot = Axis::ALL.iter().position(|a| *a == axis).unwrap();
         self.axis_index[slot].ok_or(crate::hidpp::Error::Unsupported(f::AXIS_SENSITIVITY))
+    }
+
+    /// Hands the rev lights to the host (`true`) or back to the wheel / games (`false`).
+    /// 0x807A fn3: mode 2 = host control, 0 = wheel. Lights only accept masks in mode 2.
+    pub fn set_rev_control(&mut self, host: bool) -> Result<()> {
+        self.dev.call(f::REV_LIGHTS, 0x3, &[if host { 2 } else { 0 }])?;
+        Ok(())
+    }
+
+    /// Turns the 5 rev lights on/off, one bit per light (0x1F = all). Needs host control.
+    pub fn set_rev_lights(&mut self, mask: u8) -> Result<()> {
+        self.dev.call(f::REV_LIGHTS, 0x6, &[0, mask & REV_ALL])?;
+        Ok(())
     }
 
     /// Sensitivity 0–100 as G HUB shows it. The wheel stores pedals inverted (G HUB's

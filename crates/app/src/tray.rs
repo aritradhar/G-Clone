@@ -70,6 +70,8 @@ pub fn create(shared: Arc<AppShared>) -> Option<TrayIcon> {
     MenuEvent::set_event_handler(Some(move |e: MenuEvent| {
         if e.id == quit_id {
             shared.save();
+            // Lets the device thread hand the rev lights back to the wheel first.
+            shared.engine.shutdown_and_wait(std::time::Duration::from_millis(500));
             std::process::exit(0);
         }
         request_open();

@@ -23,11 +23,13 @@ Working day to day on the hardware below. See [What's left](#whats-left) for gap
 | G602 Performance / Endurance switch | ✅ shown live; DPI lights turn green in Endurance |
 | G923 range, force-feedback strength, centering spring | ✅ |
 | G923 steering and pedal sensitivity (same values as G HUB's sliders) | ✅ |
+| G923 rev lights: off, accelerator, steering angle, or left to games | ✅ |
+| On-screen DPI popup when DPI changes | ✅ |
 | G923 live wheel angle, pedals, buttons + button actions | ✅ |
 | Litra Glow power, brightness, colour temperature | ✅ |
 | Macros (record / edit, once / while held / toggle) | ✅ |
 | Per-app profiles, tray, start with Windows, single instance | ✅ |
-| G923 RPM LEDs, TRUEFORCE, combined pedals | ❌ protocol unknown |
+| G923 TRUEFORCE, combined pedals | ❌ protocol unknown |
 
 ## Features
 
@@ -36,6 +38,8 @@ Working day to day on the hardware below. See [What's left](#whats-left) for gap
   Click a button to reprogram it; pressed buttons light up live
 - DPI stages (250–2500), report rate (125 / 250 / 500 Hz), battery level
 - Reads DPI changes made on the mouse itself, so the UI always shows the real value
+- Small on-screen popup with the new DPI and stage whenever it changes, even with the window
+  closed (can be turned off in Settings)
 - G6–G11 never reach Windows; G-Clone reads them from the receiver's vendor channel (like
   G HUB's filter driver does) so they can run keystrokes, macros, DPI shift and so on
 
@@ -45,6 +49,9 @@ Working day to day on the hardware below. See [What's left](#whats-left) for gap
 - Operating range (40–900°), force-feedback strength, centering spring
 - Steering, clutch, brake and accelerator sensitivity (0–100, same scale as G HUB). Sliders you
   never move leave the wheel's current value untouched
+- Rev (RPM) lights: leave them to the wheel and games, keep them off, or have them fill with
+  the accelerator or the steering angle. A Test button runs a sweep; quitting hands them back
+  to the wheel
 - Wheel buttons can trigger actions (keystrokes, macros, profile switching, …)
 
 **Light (Litra Glow)**
@@ -166,11 +173,12 @@ Known limitations, with the planned fix for each:
 4. **Mode switch is inferred.** The G602 Performance / Endurance switch only sends a pulse;
    G-Clone infers the mode from the forced 125 Hz report rate. If you choose 125 Hz yourself,
    the mode shows as unknown.
-5. **RPM LEDs, TRUEFORCE and combined pedals are missing.** Sensitivity was decoded by
-   watching the wheel's replies to G HUB (undocumented feature `0x80A3`: fn2(axis) →
-   `[0x64, value]`, fn3 `[axis, 0x64, value]`; pedals stored as 100 − value). The LED feature
-   (`0x807A`) wasn't touched by G HUB during capture. *Plan:* the same capture approach, while
-   changing the LED and TRUEFORCE settings in G HUB.
+5. **TRUEFORCE and combined pedals are missing.** Sensitivity was decoded by watching the
+   wheel's replies to G HUB (undocumented feature `0x80A3`: fn2(axis) → `[0x64, value]`, fn3
+   `[axis, 0x64, value]`; pedals stored as 100 − value). The rev lights (`0x807A`) were found by
+   careful testing: fn3 `[2]` hands them to the host (`[0]` back to the wheel), then fn6
+   `[0, mask]` sets the 5 lights (one bit each). *Plan:* capture G HUB while changing the
+   TRUEFORCE and combined-pedals settings. Game telemetry for the rev lights would also be nice.
 6. **G602 lighting: not controllable (investigated).** The mouse has one LED zone on an early,
    undocumented version of `0x8070`. It accepts effects 1–5 but nothing changes visibly, and
    G HUB offers no lighting settings for the G602 either. The DPI lights are shown as status

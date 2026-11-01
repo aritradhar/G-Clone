@@ -6,16 +6,19 @@ mod hook;
 mod input;
 mod joy;
 mod macros;
+pub mod osd;
 
 pub use joy::JoyLive;
 
-use crate::config::{Action, Config, LightSettings, Mods, MouseSettings, Resolved, Step, Trigger, WheelSettings};
+use crate::config::{
+    Action, Config, LightSettings, Mods, MouseSettings, Resolved, RevLights, Step, Trigger, WheelSettings,
+};
 use crate::devices::{
     discover,
     joystick::Joystick,
     litra::Litra,
     mouse::{Battery, Mouse},
-    wheel::{Axis as WheelAxis, Wheel},
+    wheel::{Axis as WheelAxis, Wheel, REV_ALL, REV_COUNT},
     Kind,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -84,12 +87,27 @@ pub(crate) enum Cmd {
     Config(Box<Config>),
     Foreground(String),
     Action(Action, bool),
+    /// New rev-light mask computed from live wheel input.
+    RevLights(u8),
+    RevTest,
     Shutdown,
+}
+
+/// What the wheel input thread needs to drive the rev lights itself.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RevSource {
+    pub mode: RevLights,
+    /// Joystick usage of the axis to show (accelerator or steering).
+    pub usage: u16,
+    pub invert: bool,
 }
 
 pub(crate) struct Shared {
     status: Mutex<Status>,
     joy: Mutex<Option<JoyLive>>,
+    rev: Mutex<RevSource>,
+    /// Set once the device thread has finished (after restoring the rev lights).
+    stopped: AtomicBool,
     repaint: Box<dyn Fn() + Send + Sync>,
 }
 
@@ -107,12 +125,14 @@ impl Engine {
         let shared = Arc::new(Shared {
             status: Mutex::new(Status::default()),
             joy: Mutex::new(None),
+            rev: Mutex::new(RevSource { mode: RevLights::Wheel, usage: 0, invert: false }),
+            stopped: AtomicBool::new(false),
             repaint: Box::new(repaint),
         });
         let macro_tx = macros::spawn();
         hook::start(hook::Ctx { mgr: tx.clone(), ui: ui_tx, macros: macro_tx.clone(), shared: shared.clone() });
 
-        let mgr = Manager::new(cfg, shared.clone(), macro_tx);
+        let mgr = Manager::new(cfg, shared.clone(), macro_tx, tx.clone());
         thread::Builder::new()
             .name("gclone-devices".into())
             .spawn(move || mgr.run(rx))
@@ -169,6 +189,21 @@ impl Engine {
     pub fn shutdown(&self) {
         let _ = self.tx.send(Cmd::Shutdown);
     }
+
+    /// Stops the device thread and waits (up to `timeout`) for it to hand the rev lights back
+    /// to the wheel, so quitting never leaves them frozen.
+    pub fn shutdown_and_wait(&self, timeout: Duration) {
+        self.shutdown();
+        let end = std::time::Instant::now() + timeout;
+        while !self.shared.stopped.load(Ordering::SeqCst) && std::time::Instant::now() < end {
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Runs a short rev-light sweep and flash on the wheel.
+    pub fn test_rev_lights(&self) {
+        let _ = self.tx.send(Cmd::RevTest);
+    }
 }
 
 /// Builds a first-run config from the devices' current settings so nothing changes on launch.
@@ -219,6 +254,9 @@ struct Applied {
     strength: Option<u8>,
     centering: Option<u8>,
     sensitivity: [Option<u8>; 4],
+    rev_mode: Option<RevLights>,
+    /// Last mask written while showing live input.
+    rev_mask: Option<u8>,
 }
 
 struct MouseCaps {
@@ -233,6 +271,8 @@ struct MouseCaps {
 const ENDURANCE_RATE_MS: u8 = 8;
 
 struct Manager {
+    /// Own command channel, handed to the wheel input thread for rev-light updates.
+    tx: Sender<Cmd>,
     api: Option<HidApi>,
     cfg: Config,
     shared: Arc<Shared>,
@@ -262,9 +302,10 @@ struct Manager {
 }
 
 impl Manager {
-    fn new(cfg: Config, shared: Arc<Shared>, macro_tx: Sender<MacroCmd>) -> Self {
+    fn new(cfg: Config, shared: Arc<Shared>, macro_tx: Sender<MacroCmd>, tx: Sender<Cmd>) -> Self {
         let _ = macro_tx.send(MacroCmd::Set(cfg.macros.clone()));
         Self {
+            tx,
             api: None,
             cfg,
             shared,
@@ -332,10 +373,58 @@ impl Manager {
                     self.refresh_profile();
                 }
                 Ok(Cmd::Action(action, down)) => self.action(action, down),
+                Ok(Cmd::RevLights(mask)) => {
+                    let res = self.show_rev_mask(mask);
+                    self.check(Kind::Wheel, res);
+                }
+                Ok(Cmd::RevTest) => {
+                    let res = self.rev_test();
+                    self.check(Kind::Wheel, res);
+                }
                 Ok(Cmd::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
                 Err(RecvTimeoutError::Timeout) => {}
             }
         }
+        // Never leave the rev lights frozen under our control after quitting.
+        if let Some(w) = self.wheel.as_mut() {
+            if !matches!(self.applied.rev_mode, None | Some(RevLights::Wheel)) {
+                let _ = w.set_rev_control(false);
+            }
+        }
+        self.shared.stopped.store(true, Ordering::SeqCst);
+    }
+
+    /// Writes a live rev-light mask, if a live mode is active and the mask changed.
+    fn show_rev_mask(&mut self, mask: u8) -> hidpp::Result<()> {
+        let live = matches!(self.applied.rev_mode, Some(RevLights::Accelerator | RevLights::Steering));
+        if let (true, Some(w)) = (live, self.wheel.as_mut()) {
+            if self.applied.rev_mask != Some(mask) {
+                self.applied.rev_mask = Some(mask);
+                w.set_rev_lights(mask)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Rev-counter sweep twice and three flashes, then the profile's mode is re-applied.
+    fn rev_test(&mut self) -> hidpp::Result<()> {
+        let Some(w) = self.wheel.as_mut() else { return Ok(()) };
+        w.set_rev_control(true)?;
+        for _ in 0..2 {
+            for lit in 0..=REV_COUNT {
+                w.set_rev_lights(((1u16 << lit) - 1) as u8)?;
+                thread::sleep(Duration::from_millis(120));
+            }
+        }
+        for _ in 0..3 {
+            w.set_rev_lights(REV_ALL)?;
+            thread::sleep(Duration::from_millis(250));
+            w.set_rev_lights(0)?;
+            thread::sleep(Duration::from_millis(250));
+        }
+        self.applied.rev_mode = None;
+        self.applied.rev_mask = None;
+        Ok(())
     }
 
     fn pick_profile(&self) -> usize {
@@ -455,6 +544,8 @@ impl Manager {
                     self.applied.range = None;
                     self.applied.strength = None;
                     self.applied.centering = None;
+                    self.applied.rev_mode = None;
+                    self.applied.rev_mask = None;
                     let mut w = Wheel::new(dev);
                     // Start from the wheel's real values so untouched axes are left alone.
                     for (i, axis) in WheelAxis::ALL.into_iter().enumerate() {
@@ -470,7 +561,7 @@ impl Manager {
         }
         if self.wheel.is_some() && !self.joy_alive.load(Ordering::SeqCst) {
             if let Some(j) = Joystick::open(api, self.wheel_pid) {
-                joy::spawn(j, self.shared.clone(), self.joy_alive.clone());
+                joy::spawn(j, self.shared.clone(), self.joy_alive.clone(), self.tx.clone());
             }
         }
     }
@@ -488,6 +579,7 @@ impl Manager {
         }
         let Ok(dpi) = m.dpi() else { return };
         if self.applied.dpi != Some(dpi) {
+            let had = self.applied.dpi.is_some();
             self.applied.dpi = Some(dpi);
             match self.current.as_ref().and_then(|c| c.mouse.dpi_stages.iter().position(|d| *d == dpi)) {
                 Some(i) => {
@@ -497,7 +589,24 @@ impl Manager {
                 // Not one of our stages: hold it until the user picks a stage or profile.
                 None => self.dpi_shift = Some(dpi),
             }
+            if had {
+                self.dpi_popup(dpi);
+            }
         }
+    }
+
+    /// Briefly shows the new DPI on screen (unless turned off in Settings).
+    fn dpi_popup(&self, dpi: u16) {
+        if !self.cfg.dpi_popup {
+            return;
+        }
+        let stages = self.current.as_ref().map(|c| c.mouse.dpi_stages.as_slice()).unwrap_or(&[]);
+        let detail = match stages.iter().position(|d| *d == dpi) {
+            _ if self.dpi_shift == Some(dpi) && !stages.contains(&dpi) => "DPI shift".to_string(),
+            Some(i) => format!("Stage {} of {}", i + 1, stages.len()),
+            None => String::new(),
+        };
+        osd::show(format!("{dpi} DPI"), detail);
     }
 
     fn read_battery(&mut self) {
@@ -523,14 +632,21 @@ impl Manager {
     fn sync_mouse(&mut self, s: &MouseSettings) -> hidpp::Result<()> {
         let Some(m) = self.mouse.as_mut() else { return Ok(()) };
         let dpi = self.dpi_shift.or_else(|| s.dpi_stages.get(self.dpi_stage).copied());
+        let mut popup = None;
         if let Some(dpi) = dpi.filter(|d| self.applied.dpi != Some(*d)) {
-            self.applied.dpi = Some(dpi);
+            // The first write after connecting just restores the profile; no popup for that.
+            if self.applied.dpi.replace(dpi).is_some() {
+                popup = Some(dpi);
+            }
             m.set_dpi(dpi)?;
         }
         let supported = self.mouse_caps.as_ref().is_some_and(|c| c.rates.contains(&s.report_rate_ms));
         if supported && self.applied.rate != Some(s.report_rate_ms) {
             self.applied.rate = Some(s.report_rate_ms);
             m.set_report_rate(s.report_rate_ms)?;
+        }
+        if let Some(dpi) = popup {
+            self.dpi_popup(dpi);
         }
         Ok(())
     }
@@ -553,7 +669,24 @@ impl Manager {
     }
 
     fn sync_wheel(&mut self, s: &WheelSettings) -> hidpp::Result<()> {
+        // Tell the wheel input thread what the rev lights should follow.
+        let axes = &self.cfg.hardware.axes;
+        *self.shared.rev.lock().unwrap() = match s.rev_lights {
+            RevLights::Accelerator => RevSource { mode: s.rev_lights, usage: axes.throttle, invert: axes.invert_pedals },
+            RevLights::Steering => RevSource { mode: s.rev_lights, usage: axes.steering, invert: false },
+            mode => RevSource { mode, usage: 0, invert: false },
+        };
         let Some(w) = self.wheel.as_mut() else { return Ok(()) };
+        if self.applied.rev_mode != Some(s.rev_lights) {
+            self.applied.rev_mode = Some(s.rev_lights);
+            self.applied.rev_mask = None;
+            w.set_rev_control(s.rev_lights != RevLights::Wheel)?;
+            if s.rev_lights != RevLights::Wheel {
+                // Live modes start dark until the first input arrives.
+                w.set_rev_lights(0)?;
+                self.applied.rev_mask = Some(0);
+            }
+        }
         if self.applied.range != Some(s.range) {
             self.applied.range = Some(s.range);
             w.set_range(s.range)?;

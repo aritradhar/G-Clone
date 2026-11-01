@@ -783,6 +783,26 @@ impl App {
         });
         section(ui, "Force feedback strength");
         slider_row(ui, egui::Slider::new(&mut w.strength, 0..=100).suffix(" %"));
+        section(ui, "Rev lights");
+        let mut test = false;
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt("rev_lights").width(170.0).selected_text(w.rev_lights.label()).show_ui(ui, |ui| {
+                for mode in RevLights::ALL {
+                    ui.selectable_value(&mut w.rev_lights, mode, mode.label());
+                }
+            });
+            test = ui.button("Test").clicked();
+        });
+        let hint = match w.rev_lights {
+            RevLights::Wheel => "Left to the wheel and to games.",
+            RevLights::Off => "Kept dark.",
+            RevLights::Accelerator => "Fill up as you press the accelerator.",
+            RevLights::Steering => "Fill up as you turn toward full lock.",
+        };
+        ui.label(RichText::new(hint).weak());
+        if test {
+            self.shared.engine.test_rev_lights();
+        }
         section(ui, "Centering spring strength");
         slider_row(ui, egui::Slider::new(&mut w.centering, 0..=100).suffix(" %"));
         ui.label(RichText::new("Pulls the wheel to center while no game drives force feedback. 0 = off.").weak());
@@ -1162,6 +1182,13 @@ impl App {
             RichText::new("Closing this window keeps G-Clone running in the tray with almost no memory use. Quit from the tray menu.")
                 .weak(),
         );
+        section(ui, "On-screen popup");
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut self.cfg.dpi_popup, "Show the new DPI briefly when it changes");
+            if ui.small_button("Preview").clicked() {
+                gclone_core::engine::osd::show("1500 DPI", "Stage 3 of 4");
+            }
+        });
         section(ui, "Storage");
         ui.label(format!("Config file: {}", Config::path().display()));
         section(ui, "G HUB");
