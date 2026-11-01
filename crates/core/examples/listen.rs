@@ -1,7 +1,10 @@
 //! Prints every input report from every openable HID collection of one device, to find
 //! out how buttons the OS ignores (e.g. G602 G6–G11) are reported.
 //!
-//! cargo run -p gclone-core --example listen -- <pid hex> [seconds]
+//! cargo run -p gclone-core --example listen -- <pid hex> [seconds] [hidpp]
+//!
+//! With `hidpp`, only HID++ reports (0x10/0x11/0x12) are printed, with timestamps — useful
+//! for watching replies to another app's (e.g. G HUB's) commands.
 
 use gclone_core::LOGITECH_VID;
 use hidapi::HidApi;
@@ -11,6 +14,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let pid = u16::from_str_radix(args.first().map(String::as_str).unwrap_or("c537"), 16)?;
     let secs: u64 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(30);
+    let hidpp_only = args.get(2).is_some_and(|a| a == "hidpp");
+    let start = Instant::now();
     let api = HidApi::new()?;
     let mut devs = Vec::new();
     for info in api.device_list().filter(|d| d.vendor_id() == LOGITECH_VID && d.product_id() == pid) {
@@ -41,8 +46,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
             if n > 0 {
-                let hex: Vec<String> = buf[..n].iter().map(|b| format!("{b:02x}")).collect();
-                println!("{tag}  {}", hex.join(" "));
+                if hidpp_only && !matches!(buf[0], 0x10..=0x12) {
+                    continue;
+                }
+                // Trim trailing zero padding of long / very long reports.
+                let end = buf[..n].iter().rposition(|b| *b != 0).map_or(1, |i| i + 1).max(5);
+                let hex: Vec<String> = buf[..end.min(n)].iter().map(|b| format!("{b:02x}")).collect();
+                println!("{:7.2}s {tag}  {}", start.elapsed().as_secs_f32(), hex.join(" "));
             }
         }
     }

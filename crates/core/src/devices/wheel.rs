@@ -18,15 +18,77 @@ const FN_SET_GAINS: u8 = 0x8;
 const EFFECT_SPRING: u8 = 0x06;
 const EFFECT_AUTOSTART: u8 = 0x80;
 
+/// Axes with an adjustable sensitivity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Axis {
+    Steering,
+    Throttle,
+    Brake,
+    Clutch,
+}
+
+impl Axis {
+    pub const ALL: [Axis; 4] = [Axis::Steering, Axis::Throttle, Axis::Brake, Axis::Clutch];
+
+    /// HID Generic Desktop usage the wheel reports for this axis.
+    fn usage(self) -> u16 {
+        match self {
+            Axis::Steering => 0x30,
+            Axis::Throttle => 0x31,
+            Axis::Brake => 0x32,
+            Axis::Clutch => 0x35,
+        }
+    }
+}
+
 pub struct Wheel {
     pub dev: Device,
     /// Slot of our centering-spring effect, if one is loaded.
     spring_slot: Option<u8>,
+    /// AxisSensitivity (0x80A3) entry index per [`Axis::ALL`], if the wheel has one.
+    axis_index: [Option<u8>; 4],
 }
 
 impl Wheel {
-    pub fn new(dev: Device) -> Self {
-        Self { dev, spring_slot: None }
+    pub fn new(mut dev: Device) -> Self {
+        let axis_index = Self::find_axes(&mut dev);
+        Self { dev, spring_slot: None, axis_index }
+    }
+
+    /// 0x80A3 fn0 → entry count; fn1(i) → `00 01 <usage hi> <usage lo> <bits> ..`.
+    fn find_axes(dev: &mut Device) -> [Option<u8>; 4] {
+        let mut out = [None; 4];
+        let Ok(count) = dev.call(f::AXIS_SENSITIVITY, 0x0, &[]).map(|r| r.params()[0]) else { return out };
+        for i in 0..count {
+            let Ok(r) = dev.call(f::AXIS_SENSITIVITY, 0x1, &[i]) else { continue };
+            let usage = u16::from_be_bytes([r.params()[2], r.params()[3]]);
+            if let Some(slot) = Axis::ALL.iter().position(|a| a.usage() == usage) {
+                out[slot] = Some(i);
+            }
+        }
+        out
+    }
+
+    fn axis(&self, axis: Axis) -> Result<u8> {
+        let slot = Axis::ALL.iter().position(|a| *a == axis).unwrap();
+        self.axis_index[slot].ok_or(crate::hidpp::Error::Unsupported(f::AXIS_SENSITIVITY))
+    }
+
+    /// Sensitivity 0–100 as G HUB shows it. The wheel stores pedals inverted (G HUB's
+    /// "18" reads back as 82); steering is stored as-is.
+    pub fn sensitivity(&mut self, axis: Axis) -> Result<u8> {
+        let i = self.axis(axis)?;
+        let raw = self.dev.call(f::AXIS_SENSITIVITY, 0x2, &[i])?.params()[1].min(100);
+        Ok(if axis == Axis::Steering { raw } else { 100 - raw })
+    }
+
+    pub fn set_sensitivity(&mut self, axis: Axis, value: u8) -> Result<()> {
+        let i = self.axis(axis)?;
+        let v = value.min(100);
+        let raw = if axis == Axis::Steering { v } else { 100 - v };
+        // The first byte is always 0x64, as G HUB sends it; it is part of the stored pair.
+        self.dev.call(f::AXIS_SENSITIVITY, 0x3, &[i, 0x64, raw])?;
+        Ok(())
     }
 
     /// Number of effect slots the wheel offers.

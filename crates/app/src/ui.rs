@@ -391,6 +391,16 @@ fn slider_row(ui: &mut Ui, slider: egui::Slider) {
     ui.add_sized([ui.available_width(), 22.0], slider);
 }
 
+/// 0–100 slider for an axis sensitivity. Until it's moved, it shows the wheel's current
+/// value and leaves the wheel alone (`None` in the config).
+fn sensitivity_slider(ui: &mut Ui, slot: &mut Option<u8>, on_wheel: Option<u8>) {
+    let mut v = slot.or(on_wheel).unwrap_or(50);
+    let response = ui.add_sized([ui.available_width(), 22.0], egui::Slider::new(&mut v, 0..=100));
+    if response.changed() {
+        *slot = Some(v);
+    }
+}
+
 // ---------------------------------------------------------------- mouse
 
 impl App {
@@ -752,10 +762,18 @@ impl App {
         }
     }
 
+    /// Sensitivity values currently on the wheel, per `wheel::Axis::ALL`.
+    fn wheel_sensitivity(&self) -> [Option<u8>; 4] {
+        self.status.wheel.as_ref().map_or([None; 4], |w| w.sensitivity)
+    }
+
     fn wheel_steering(&mut self, ui: &mut Ui) {
+        let actual = self.wheel_sensitivity();
         let default = self.cfg.profiles[0].wheel.clone().unwrap_or_default();
         let edit = self.edit;
         let Some(w) = override_section(ui, edit, &mut self.cfg.profiles[edit].wheel, &default) else { return };
+        section(ui, "Sensitivity");
+        sensitivity_slider(ui, &mut w.sensitivity.steering, actual[0]);
         section(ui, "Operating range (angle)");
         slider_row(ui, egui::Slider::new(&mut w.range, wheel::RANGE_MIN..=wheel::RANGE_MAX).step_by(10.0).suffix("°"));
         ui.horizontal_wrapped(|ui| {
@@ -771,6 +789,17 @@ impl App {
     }
 
     fn wheel_pedals(&mut self, ui: &mut Ui) {
+        let actual = self.wheel_sensitivity();
+        let default = self.cfg.profiles[0].wheel.clone().unwrap_or_default();
+        let edit = self.edit;
+        if let Some(w) = override_section(ui, edit, &mut self.cfg.profiles[edit].wheel, &default) {
+            // Same order as G HUB; indices follow wheel::Axis::ALL (steering, throttle, brake, clutch).
+            for (label, slot) in [("Clutch sensitivity", 3), ("Brake sensitivity", 2), ("Accelerator sensitivity", 1)] {
+                section(ui, label);
+                sensitivity_slider(ui, w.sensitivity.slot_mut(slot), actual[slot]);
+            }
+        }
+        ui.add_space(8.0);
         section(ui, "Pedal axes");
         ui.label(RichText::new("Press each pedal and check the right bar moves. Change the axis if it doesn't.").weak());
         ui.add_space(6.0);

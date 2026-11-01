@@ -18,6 +18,8 @@ pub const RGB_EFFECTS: u16 = 0x8071;
 pub const ONBOARD_PROFILES: u16 = 0x8100;
 pub const MOUSE_BUTTON_SPY: u16 = 0x8110;
 pub const FORCE_FEEDBACK: u16 = 0x8123;
+/// Undocumented; per-axis sensitivity on the G923 (what G HUB's sensitivity sliders write).
+pub const AXIS_SENSITIVITY: u16 = 0x80A3;
 
 pub fn name(id: u16) -> &'static str {
     match id {
@@ -53,6 +55,7 @@ pub fn name(id: u16) -> &'static str {
         0x8071 => "RgbEffects",
         0x8080 => "PerKeyLighting",
         0x8090 => "ModeStatus",
+        0x80A3 => "AxisSensitivity (undocumented)",
         0x8100 => "OnboardProfiles",
         0x8110 => "MouseButtonSpy",
         0x8111 => "LatencyMonitoring",

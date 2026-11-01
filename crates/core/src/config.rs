@@ -329,11 +329,42 @@ pub struct WheelSettings {
     pub range: u16,
     pub strength: u8,
     pub centering: u8,
+    /// Per-axis sensitivity 0–100; `None` leaves the wheel's current value alone.
+    #[serde(default)]
+    pub sensitivity: AxisSensitivity,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AxisSensitivity {
+    #[serde(default)]
+    pub steering: Option<u8>,
+    #[serde(default)]
+    pub throttle: Option<u8>,
+    #[serde(default)]
+    pub brake: Option<u8>,
+    #[serde(default)]
+    pub clutch: Option<u8>,
+}
+
+impl AxisSensitivity {
+    /// In the order of `devices::wheel::Axis::ALL`.
+    pub fn as_array(&self) -> [Option<u8>; 4] {
+        [self.steering, self.throttle, self.brake, self.clutch]
+    }
+
+    pub fn slot_mut(&mut self, i: usize) -> &mut Option<u8> {
+        match i {
+            0 => &mut self.steering,
+            1 => &mut self.throttle,
+            2 => &mut self.brake,
+            _ => &mut self.clutch,
+        }
+    }
 }
 
 impl Default for WheelSettings {
     fn default() -> Self {
-        Self { range: 900, strength: 100, centering: 0 }
+        Self { range: 900, strength: 100, centering: 0, sensitivity: AxisSensitivity::default() }
     }
 }
 
@@ -539,7 +570,12 @@ mod tests {
         c.hardware.wheel_button_names.push((5, "RB".into()));
         let mut p = Profile::new("Racing");
         p.apps.push("forza.exe".into());
-        p.wheel = Some(WheelSettings { range: 540, strength: 80, centering: 20 });
+        p.wheel = Some(WheelSettings {
+            range: 540,
+            strength: 80,
+            centering: 20,
+            sensitivity: AxisSensitivity { steering: Some(30), brake: Some(56), ..Default::default() },
+        });
         c.profiles.push(p);
         c.macros.push(Macro {
             name: "hello".into(),

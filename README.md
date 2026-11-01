@@ -22,11 +22,12 @@ Working day to day on the hardware below. See [What's left](#whats-left) for gap
 | Media / browser actions (volume, mute, tracks, browser back / forward / refresh) | ✅ |
 | G602 Performance / Endurance switch | ✅ shown live; DPI lights turn green in Endurance |
 | G923 range, force-feedback strength, centering spring | ✅ |
+| G923 steering and pedal sensitivity (same values as G HUB's sliders) | ✅ |
 | G923 live wheel angle, pedals, buttons + button actions | ✅ |
 | Litra Glow power, brightness, colour temperature | ✅ |
 | Macros (record / edit, once / while held / toggle) | ✅ |
 | Per-app profiles, tray, start with Windows, single instance | ✅ |
-| Wheel / pedal sensitivity curves, RPM LEDs, TRUEFORCE | ❌ protocol unknown |
+| G923 RPM LEDs, TRUEFORCE, combined pedals | ❌ protocol unknown |
 
 ## Features
 
@@ -42,6 +43,8 @@ Working day to day on the hardware below. See [What's left](#whats-left) for gap
 - Live wheel figure that turns with the real wheel, with the operating-range arc and angle readout
 - Live clutch / brake / gas pedal meters, with pedal axis calibration
 - Operating range (40–900°), force-feedback strength, centering spring
+- Steering, clutch, brake and accelerator sensitivity (0–100, same scale as G HUB). Sliders you
+  never move leave the wheel's current value untouched
 - Wheel buttons can trigger actions (keystrokes, macros, profile switching, …)
 
 **Light (Litra Glow)**
@@ -163,11 +166,15 @@ Known limitations, with the planned fix for each:
 4. **Mode switch is inferred.** The G602 Performance / Endurance switch only sends a pulse;
    G-Clone infers the mode from the forced 125 Hz report rate. If you choose 125 Hz yourself,
    the mode shows as unknown.
-5. **Sensitivity curves, RPM LEDs and TRUEFORCE are missing.** The HID++ features (`0x8127`,
-   `0x807A`) aren't publicly documented. *Plan:* capture G HUB's traffic for these features
-   with a USB sniffer, then implement them.
-6. **Lighting effects on the G602 (`0x8070`) aren't exposed.** *Plan:* add DPI-LED brightness /
-   effect controls once mapped.
+5. **RPM LEDs, TRUEFORCE and combined pedals are missing.** Sensitivity was decoded by
+   watching the wheel's replies to G HUB (undocumented feature `0x80A3`: fn2(axis) →
+   `[0x64, value]`, fn3 `[axis, 0x64, value]`; pedals stored as 100 − value). The LED feature
+   (`0x807A`) wasn't touched by G HUB during capture. *Plan:* the same capture approach, while
+   changing the LED and TRUEFORCE settings in G HUB.
+6. **G602 lighting: not controllable (investigated).** The mouse has one LED zone on an early,
+   undocumented version of `0x8070`. It accepts effects 1–5 but nothing changes visibly, and
+   G HUB offers no lighting settings for the G602 either. The DPI lights are shown as status
+   only (green in Endurance mode).
 7. **No installer.** *Plan:* a small installer or a `winget` manifest that puts the exe and its
    `data` folder in one place.
 8. **G HUB conflicts.** Both apps fight if G HUB is running. *Plan:* detect `lghub*.exe` and

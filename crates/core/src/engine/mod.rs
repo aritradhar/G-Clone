@@ -10,7 +10,14 @@ mod macros;
 pub use joy::JoyLive;
 
 use crate::config::{Action, Config, LightSettings, Mods, MouseSettings, Resolved, Step, Trigger, WheelSettings};
-use crate::devices::{discover, joystick::Joystick, litra::Litra, mouse::{Battery, Mouse}, wheel::Wheel, Kind};
+use crate::devices::{
+    discover,
+    joystick::Joystick,
+    litra::Litra,
+    mouse::{Battery, Mouse},
+    wheel::{Axis as WheelAxis, Wheel},
+    Kind,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 use crate::hidpp::{self, Error};
 use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
@@ -57,6 +64,8 @@ pub struct WheelStatus {
     pub range: u16,
     pub strength: u8,
     pub centering: u8,
+    /// Sensitivity per `devices::wheel::Axis::ALL`, as last read from or written to the wheel.
+    pub sensitivity: [Option<u8>; 4],
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -190,7 +199,7 @@ pub fn bootstrap_config() -> Config {
             Kind::Wheel => {
                 let mut w = Wheel::new(dev);
                 if let (Ok(range), Ok(strength)) = (w.range(), w.strength()) {
-                    d.wheel = Some(WheelSettings { range, strength, centering: 0 });
+                    d.wheel = Some(WheelSettings { range, strength, centering: 0, ..Default::default() });
                 }
             }
         }
@@ -209,6 +218,7 @@ struct Applied {
     range: Option<u16>,
     strength: Option<u8>,
     centering: Option<u8>,
+    sensitivity: [Option<u8>; 4],
 }
 
 struct MouseCaps {
@@ -445,7 +455,12 @@ impl Manager {
                     self.applied.range = None;
                     self.applied.strength = None;
                     self.applied.centering = None;
-                    self.wheel = Some(Wheel::new(dev));
+                    let mut w = Wheel::new(dev);
+                    // Start from the wheel's real values so untouched axes are left alone.
+                    for (i, axis) in WheelAxis::ALL.into_iter().enumerate() {
+                        self.applied.sensitivity[i] = w.sensitivity(axis).ok();
+                    }
+                    self.wheel = Some(w);
                     self.wheel_pid = pid;
                 }
             }
@@ -551,6 +566,12 @@ impl Manager {
             self.applied.centering = Some(s.centering);
             w.set_centering(s.centering)?;
         }
+        for (i, (axis, want)) in WheelAxis::ALL.into_iter().zip(s.sensitivity.as_array()).enumerate() {
+            if let Some(v) = want.filter(|v| self.applied.sensitivity[i] != Some(*v)) {
+                self.applied.sensitivity[i] = Some(v);
+                w.set_sensitivity(axis, v)?;
+            }
+        }
         Ok(())
     }
 
@@ -598,6 +619,7 @@ impl Manager {
                 range: self.applied.range.unwrap_or(0),
                 strength: self.applied.strength.unwrap_or(0),
                 centering: self.applied.centering.unwrap_or(0),
+                sensitivity: self.applied.sensitivity,
             }),
             active_profile: self.active,
             dpi_stage: self.dpi_stage,

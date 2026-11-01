@@ -2,7 +2,7 @@
 //!
 //! cargo run -p gclone-core --example status
 
-use gclone_core::devices::{discover, litra::Litra, mouse::Mouse, wheel::Wheel, Kind};
+use gclone_core::devices::{discover, litra::Litra, mouse::Mouse, wheel::{Axis, Wheel}, Kind};
 use hidapi::HidApi;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -30,6 +30,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("  range        {:?} deg", w.range());
                 println!("  strength     {:?} %", w.strength());
                 println!("  effect slots {:?}", w.effect_slots());
+                for axis in Axis::ALL {
+                    println!("  sensitivity  {axis:?}: {:?}", w.sensitivity(axis));
+                }
             }
         }
     }
