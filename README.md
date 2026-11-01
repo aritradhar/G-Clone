@@ -99,8 +99,14 @@ Requirements: Windows 10/11, Rust (stable, MSVC toolchain) and the Visual Studio
 cargo build --release
 ```
 
-The executable is `target/release/gclone.exe`. Copy it anywhere. G-Clone stores its settings in a
-`data` folder next to the exe; set `GCLONE_DATA` to use a different folder.
+The executable is `target/release/gclone.exe`. Copy it anywhere.
+
+**Settings location.** G-Clone stores its settings in the folder named by the `GCLONE_DATA`
+environment variable, or otherwise in a `data` folder next to the exe. If you run more than one
+copy of the exe (say a dev build and an installed one), set `GCLONE_DATA` so they share one set
+of settings; otherwise each copy keeps its own and the assignments seem to vanish when you switch.
+The Settings page shows the file in use. If the file is ever unreadable it's kept as
+`config.toml.invalid-<time>` rather than overwritten.
 
 **Quit G HUB first.** Both apps write device settings, so running them together makes them
 fight.

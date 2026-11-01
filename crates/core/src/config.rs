@@ -456,7 +456,13 @@ impl Config {
                 Some(c)
             }
             Err(e) => {
-                log::error!("config.toml is invalid, starting fresh: {e}");
+                // Keep the unreadable file instead of letting a fresh config overwrite it.
+                let stamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs());
+                let backup = Self::path().with_extension(format!("toml.invalid-{stamp}"));
+                let _ = std::fs::rename(Self::path(), &backup);
+                log::error!("config.toml is invalid ({e}); moved to {} and starting fresh", backup.display());
                 None
             }
         }
